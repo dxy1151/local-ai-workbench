@@ -1,0 +1,17 @@
+{
+  "name": "local-ai-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "description": "本地AI对话工作台 —— 本地运行的 AI 角色扮演 / 直连聊天工具，OpenAI 兼容 API 驱动，数据只存在本机",
+  "type": "module",
+  "bin": {
+    "workbench": "./start.js"
+  },
+  "scripts": {
+    "start": "node start.js",
+    "smoke": "node smoke.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,4 @@
+cd ~/local-ai-workbench && node start.js
+启动（Linux：默认 http://127.0.0.1:5178；手机连用 node start.js 5178 0.0.0.0）
+或者： bash ~/local-ai-workbench/linux/run.sh
+数据目录：默认 ./data（空壳子自带的是空的；要指到同步目录就写 data-dir.txt）

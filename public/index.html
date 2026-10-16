@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本地AI对话工作台</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>">
+</head>
+<body>
+
+<div class="app">
+  <!-- 侧边栏：角色 + 会话 -->
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <h1 class="logo">✦ 本地AI对话工作台</h1>
+      <button class="icon-btn" id="btn-settings" title="设置">⚙</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="characters">角色</button>
+      <button class="tab" data-tab="sessions">会话</button>
+      <button class="tab" data-tab="direct">直连</button>
+    </div>
+
+    <div class="tab-panel active" id="panel-characters">
+      <button class="btn-primary block" id="btn-new-character">+ 新建角色</button>
+      <ul class="list" id="character-list"></ul>
+    </div>
+
+    <div class="tab-panel" id="panel-sessions">
+      <ul class="list" id="session-list"></ul>
+    </div>
+
+    <div class="tab-panel" id="panel-direct">
+      <button class="btn-primary block" id="btn-new-direct">+ 新对话（直连模型）</button>
+      <ul class="list" id="direct-list"></ul>
+      <p class="panel-note">
+        不走角色卡：发出去的请求里<b>一条系统提示词都没有</b>，也<b>不做任何后处理</b> ——
+        你打什么就发什么，模型回什么就存什么。模型 / 接口地址用的是右上角 ⚙ 里那一份。
+        <br>想让它带点你那边的说话习惯，用聊天页右上角的 <b>💬 常用语</b>（口头禅 + 出现频率）——
+        那是唯一会注入的一段，不填就一个字都不加。
+      </p>
+    </div>
+
+    <div class="sidebar-foot" id="status-line">未配置 API Key</div>
+  </aside>
+
+  <div class="backdrop" id="backdrop" hidden></div>
+
+  <!-- 主聊天区 -->
+  <main class="main">
+    <header class="chat-head">
+      <button class="icon-btn nav-toggle" id="btn-nav" title="角色 / 会话">☰</button>
+      <div class="avatar" id="chat-avatar">?</div>
+      <div class="chat-head-text">
+        <div class="chat-name" id="chat-name">选择一个角色开始</div>
+        <div class="chat-tagline" id="chat-tagline">从左侧角色列表里挑一个，或者新建一个</div>
+      </div>
+      <button class="icon-btn" id="btn-context" title="查看发送给模型的上下文" hidden>👁</button>
+      <button class="icon-btn" id="btn-autospeak" title="自动朗读：每条新回复生成完就读出来" hidden>🔇</button>
+      <button class="icon-btn" id="btn-websearch" title="联网搜索：开着时每一轮先用必应搜一次" hidden>🌐</button>
+      <button class="icon-btn" id="btn-ollama-on" title="启动本机 Ollama" hidden>🟢</button>
+      <button class="icon-btn" id="btn-ollama-preload" title="预启动模型：按下就开始把它加载进显存（之后就快了）" hidden>⬇</button>
+      <button class="icon-btn" id="btn-ollama-keep" title="不关闭：模型常驻显存，不再自动卸载" hidden>📌</button>
+      <button class="icon-btn" id="btn-ollama-free" title="立刻释放显存" hidden>🧹</button>
+      <button class="icon-btn" id="btn-knowledge" title="资料库：给这个角色喂背景资料" hidden>📚</button>
+      <button class="icon-btn" id="btn-direct-phrases" title="常用语：给直连模式加一组口头禅 + 出现频率" hidden>💬</button>
+      <button class="icon-btn" id="btn-edit-character" title="编辑人设" hidden>✎</button>
+      <button class="icon-btn" id="btn-clear" title="清空当前会话" hidden>🗑</button>
+    </header>
+
+    <div class="messages" id="messages">
+      <div class="empty" id="empty-state">
+        <div class="empty-icon">✦</div>
+        <p>还没有开始对话</p>
+      </div>
+    </div>
+
+    <div class="lock-bar" id="lock-bar" hidden></div>
+
+    <div class="attach-bar" id="attach-bar" hidden>
+      <img id="attach-thumb" alt="">
+      <span class="attach-name" id="attach-name"></span>
+      <button type="button" class="attach-clear" id="attach-clear" title="不发了，取消这张图">✕</button>
+    </div>
+
+    <form class="composer" id="composer">
+      <button type="button" class="icon-btn composer-btn" id="btn-attach" title="附图：把这张图直接发给角色/模型看（本地视觉模型，图片不出本机；这一轮会临时换成视觉模型）" disabled>🖼</button>
+      <input type="file" id="attach-file" accept="image/*" hidden>
+      <button type="button" class="icon-btn composer-btn" id="btn-vision" title="识图：选一张图，让本地视觉模型描述画面里在发生什么" disabled>📷</button>
+      <input type="file" id="vision-file" accept="image/*" hidden>
+      <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行；敲 cheats=1 让角色自己演下一句）" disabled></textarea>
+      <button type="submit" class="btn-send" id="btn-send" disabled>发送</button>
+    </form>
+  </main>
+</div>
+
+<!-- 角色编辑弹窗 -->
+<div class="modal-mask" id="character-modal" hidden>
+  <div class="modal">
+    <h2 id="character-modal-title">新建角色</h2>
+    <form id="character-form">
+      <input type="hidden" name="id">
+      <label>名字 <span class="req">*</span>
+        <input name="name" required placeholder="例如：林清和">
+      </label>
+      <label>头像（一个 emoji 或图片 URL）
+        <input name="avatar" placeholder="🌙">
+      </label>
+      <label>一句话简介
+        <input name="tagline" placeholder="清冷寡言的剑客">
+      </label>
+      <label>人物设定 <span class="req">*</span>
+        <textarea name="persona" rows="6" required placeholder="性格、说话风格、喜好、与你的关系…&#10;例如：你是我的青梅竹马，表面冷淡其实很在意我，说话简短，偶尔会脸红。"></textarea>
+      </label>
+      <label>背景场景
+        <textarea name="scenario" rows="3" placeholder="故事发生在哪、你们正在做什么…"></textarea>
+      </label>
+      <label>开场白
+        <textarea name="greeting" rows="3" placeholder="新会话开始时，角色说的第一句话"></textarea>
+      </label>
+      <label>常用词 / 口头禅
+        <textarea name="phrases" rows="3" placeholder="一行一个，也可用逗号分隔&#10;例如：&#10;在下&#10;罢了&#10;少废话&#10;哼"></textarea>
+        <small>会自动写进角色设定，让它的用词更贴人设、回复更准。</small>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-character-cancel">取消</button>
+        <button type="submit" class="btn-primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- 设置弹窗 -->
+<div class="modal-mask" id="settings-modal" hidden>
+  <div class="modal">
+    <h2>设置</h2>
+    <div class="app-version">当前版本 <b id="app-version">—</b></div>
+    <form id="settings-form">
+      <label>API Key
+        <input name="apiKey" type="password" placeholder="sk-..." autocomplete="off">
+        <small id="key-hint"></small>
+      </label>
+      <label>Base URL
+        <input name="baseUrl" placeholder="https://api.deepseek.com/v1">
+        <small>默认 DeepSeek 官方接口；用中转站或 OpenAI 就改成对应地址。</small>
+      </label>
+      <label>代理地址（可选）
+        <input name="proxy" placeholder="127.0.0.1:7897">
+        <small>国内直连不通时填本地代理端口，例如 Clash 的 127.0.0.1:7897；留空表示直连。</small>
+      </label>
+      <label>模型
+        <input name="model" placeholder="deepseek-flash" list="model-list">
+        <datalist id="model-list"></datalist>
+      </label>
+
+      <div class="local-models-box">
+        <div class="lm-head">
+          <span>本机 Ollama 里的模型（点一下就能切）</span>
+          <span>
+            <button type="button" class="btn-ghost btn-tiny" id="local-models-refresh">刷新</button>
+            <button type="button" class="btn-ghost btn-tiny" id="cloud-back-btn" hidden>切回云端</button>
+          </span>
+        </div>
+        <div id="local-models" class="lm-list"><div class="lm-empty">打开设置时自动读取…</div></div>
+        <small>点「用这个」= 一次把 <b>Base URL / Key / 模型名 / 关思考</b> 全配好，不用手动改各项。</small>
+          Qwen3 这代会自动勾上「关掉思考」（不关的话思考会吃满整轮、慢 10 倍）。</small>
+      </div>
+      <label>识图模型（📷 用，本地视觉模型）
+        <input name="visionModel" placeholder="qwen2.5vl:3b" list="model-list">
+        <small>输入框左边的 📷 用它来描述图片。<b>必须带视觉（vision）能力</b>，而且得在本机 Ollama 里 —— 聊天用的模型多半是纯文本的，发图过去只会报错。留空 = 用默认的 <code>qwen2.5vl:3b</code>（Ollama 官方视觉模型，约 3.2GB）。</small>
+      </label>
+      <label>额外请求参数（可选，JSON）
+        <textarea name="extraBody" rows="2" placeholder='{"reasoning_effort":"none"}' spellcheck="false"></textarea>
+        <small>原样拼进请求体。本地模型常用 <code>{"reasoning_effort":"none"}</code> 关掉 Qwen3 的「思考」；留空即不传。<b>注意</b>：Ollama 实测会忽略 <code>think:false</code> / <code>reasoning_effort</code>，真正管用的是下面那个「关掉思考」开关。</small>
+      </label>
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="thinkOff">
+          <span>关掉思考（往系统提示词末尾加 <code>/no_think</code>）</span>
+        </span>
+        <small>Qwen3 这代模型会先写一大段思考再回答 —— 实测思考会吃满整条回复的 token，还慢 10 倍（3 秒 vs 30 秒）。勾上后会在系统提示词末尾加 <code>/no_think</code>：<b>这是实测唯一有效的开关</b>（<code>think:false</code>、<code>reasoning_effort:none</code> 都会被 Ollama 忽略）。用 DeepSeek / Qwen2.5 这类不思考的模型时勾不勾都行。切到 Qwen3 模型时会自动帮你勾上。</small>
+      </label>
+      <label>叙事推进指令（留空即关闭）
+        <textarea name="narrative" rows="6" spellcheck="false" placeholder="留空 = 不注入。想开就自己写一段，例如：&#10;让角色主动推进剧情，但推进只能从眼前这个场景里长出来——不要凭空造人、造事件、造声响。"></textarea>
+        <small>这段会加进系统提示词，让角色主动推进剧情、而不是只回应上一句话。<b>默认不注入</b>，要开就在这里自己写一段；清空即关闭。</small>
+      </label>
+      <label>温度（越高越活泼，越低越稳定）
+        <div class="range-row">
+          <input name="temperature" type="range" min="0" max="2" step="0.05">
+          <output id="temp-out"></output>
+        </div>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="autoPair">
+          <span>输入左括号时自动补右括号</span>
+        </span>
+        <small>敲 <code>（</code> 自动补上 <code>）</code> 并把光标放在中间；打到右括号时会跳过已有的那个，不会越打越多；Backspace 一次删掉空括号对。支持 <code>（【「《〔｛</code> 和 <code>([{</code>。<b>关掉后输入完全按原样</b>，适合用别的输入法自己处理括号的情况。</small>
+      </label>
+
+      <details class="tts-box">
+        <summary>朗读（让角色把台词读出来）</summary>
+        <label>TTS 服务地址（OpenAI 兼容的 /v1/audio/speech）
+          <input name="ttsBaseUrl" placeholder="http://127.0.0.1:8000" spellcheck="false">
+          <small>本机任何实现了 <code>POST /v1/audio/speech</code> 的服务都行（GPT-SoVITS 的 OpenAI 封装、openedai-speech、Kokoro-FastAPI…）。
+          留空 = 不用。README「朗读」一节有可直接抄的安装方式；<b>音频不出本机</b>。</small>
+        </label>
+        <div class="tts-row">
+          <label>模型<input name="ttsModel" placeholder="tts-1" spellcheck="false"></label>
+          <label>音色<input name="ttsVoice" placeholder="alloy" spellcheck="false"></label>
+          <label>语速<input name="ttsSpeed" type="number" min="0.5" max="2" step="0.05" placeholder="1"></label>
+          <label>格式
+            <select name="ttsFormat">
+              <option value="mp3">mp3</option>
+              <option value="wav">wav</option>
+              <option value="opus">opus</option>
+            </select>
+          </label>
+        </div>
+        <label>TTS 的 Key（可选，本机服务一般不需要）
+          <input name="ttsApiKey" placeholder="留空 = 不修改已保存的" spellcheck="false">
+        </label>
+        <div class="limit-row">
+          <button type="button" class="btn-ghost btn-tiny" id="tts-test">试听</button>
+          <small>会用<b>当前填的</b>地址合成一句试听（不保存也能试）。每个角色还能在角色卡里单独填音色。</small>
+        </div>
+        <label class="check-row">
+          <span class="check-line">
+            <input type="checkbox" name="ttsAuto">
+            <span>语言自动触发（每条新回复生成完自动读出来）</span>
+          </span>
+          <small>聊天页右上角的 🔊/🔇 也能随时开关，不用进来改。自动读的时候失败不会弹窗打断你（只在控制台留一行）。</small>
+        </label>
+      </details>
+
+      <details class="tts-box" id="websearch-box">
+        <summary>联网搜索（必应）</summary>
+        <label class="check-row">
+          <span class="check-line">
+            <input type="checkbox" name="webSearch">
+            <span>开着时，每一轮先用必应搜一次，结果作为参考资料给模型</span>
+          </span>
+          <small>
+            搜索结果只进<b>系统提示词</b>的参考层（和资料库同一层），不改写你说的话、也不进聊天记录；
+            模型被要求「只作参考、不要照念、不许编造」。
+            聊天页右上角的 <b>🌐</b> 也能随时开关。<b>关着时一次网络请求都不发。</b>
+          </small>
+        </label>
+        <div class="limit-row">
+          <label>站点
+            <select name="webSearchSite">
+              <option value="intl">国际版 www.bing.com（需要代理）</option>
+              <option value="cn">国内版 cn.bing.com（可直连）</option>
+            </select>
+          </label>
+          <label>取几条<input name="webSearchCount" type="number" min="1" max="10" step="1" value="5"></label>
+          <label>注入上限（字）<input name="webSearchChars" type="number" min="0" max="4000" step="100" value="1600"></label>
+        </div>
+        <small class="hint-block">
+          ⚠ 必应会按你的<b>出口 IP</b> 决定给哪个版本：选国际版但没走代理时，会被 302 到 cn.bing.com
+          （改站点/语言/cookie 都没用）—— 真发生时会明确提示你。
+          搜索词取你这一轮说的话（剥掉 <code>*动作*</code> 和 <code>（环境）</code> 之后再搜）。
+        </small>
+        <div class="limit-row">
+          <button type="button" class="btn-ghost btn-tiny" id="websearch-test">试搜一次</button>
+          <input name="webSearchQuery" placeholder="试搜关键词（留空用默认）" spellcheck="false">
+          <small id="websearch-state">用<b>当前表单里填的</b>站点/代理试搜（不保存也能试）。</small>
+        </div>
+        <div class="ctx-meta" id="websearch-result" hidden></div>
+      </details>
+
+      <details class="tts-box" id="global-defaults">
+        <summary>默认维度与默认提示词（没有单独设过的角色用这份）</summary>
+        <div class="limit-row">
+          <small>
+            维度和特点提示词是<b>每个角色各一份</b>：在角色的 <b>🎛 维度</b> 里调过之后就以它自己那份为准；
+            这里这份是<b>默认值</b>，没调过的角色、以及以后新建的角色都用它。
+            0 分 = 完全不出现（<b>语言 0 = 那一轮不写台词</b>）。
+          </small>
+        </div>
+        <div id="cfg-dims"></div>
+        <label class="check-row">
+          <span class="check-line"><span>默认特点提示词</span></span>
+          <textarea id="cfg-hint" rows="3" maxlength="500" placeholder="留空 = 不注入（比如：这次让她主动一点、别老提钱）"></textarea>
+          <small id="cfg-hint-count">0 / 500</small>
+        </label>
+        <label class="check-row">
+          <span class="check-line"><span>等义词（全角色通用）</span></span>
+          <textarea id="cfg-synonyms" rows="4" maxlength="2000" placeholder="每行一条「词 = 意思」，比如：&#10;码农 = 程序员&#10;开摆 = 摆烂、不想努力了&#10;干货 = 有用的内容 #输出&#10;（# 开头是注释；行尾加 #输出 表示「回答时也用这个说法」）"></textarea>
+          <small id="cfg-synonyms-hint">给模型的「我这么说 = 我什么意思」对照表（梗、俗称、黑话）。改一处，<b>所有角色都生效</b>；直连模式另有一份。</small>
+          <label class="check-line" style="margin-top:6px">
+            <input type="checkbox" id="cfg-synonyms-output">
+            <span>回答时也用我这些说法（整张表都进输出；只标了 <code>#输出</code> 的条目始终生效）</span>
+          </label>
+        </label>
+        <div class="limit-row">
+          <button type="button" class="btn-ghost btn-tiny" id="cfg-dims-save">保存默认值</button>
+          <small id="cfg-dims-state"></small>
+        </div>
+      </details>
+
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="autoClean">
+          <span>自动清掉"凭空造出来的动静"</span>
+        </span>
+        <small>模型常自己加"门外的脚步声""隔壁开锁""警笛声"这类场景里根本没有的事来打断剧情。勾上后会在**写进聊天记录之前**把这些句子删掉（一次删除会提示你）。</small>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="forceAction">
+          <span>动作开头（强制角色先动再说话）</span>
+        </span>
+        <small>给模型的回复塞一个 <code>*角色名</code> 的开头，让它必须从这个动作往下续写 —— 这样它就没机会用"你来了就好""要不要先坐下""我们慢慢来"这类礼貌开场回避推进。云端接口若不支持会自动去掉，不影响正常聊天。</small>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="cleanHistory">
+          <span>发送前清洗历史里的套路</span>
+        </span>
+        <small>模型每轮都在照抄自己前几轮的"别急 / 慢慢来 / 要不要先坐下"。勾上后，**发出去之前**会把历史里这类成句的台词和凭空动静擦掉，<b>聊天记录本身一个字都不会改</b>（「查看上下文」里能看到实际发出去的样子）。</small>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="workGuard">
+          <span>工作时段锁</span>
+        </span>
+        <small>工作日 09:00-12:00、14:00-18:00（北京时间）禁止发消息；其余时间不受影响。<b>只对云端模型生效</b> —— 接口地址是本地或内网（127.0.0.1 / localhost / 192.168.* 等）时不受限制。</small>
+      </label>
+
+      <div class="data-sync">
+        <div class="data-sync-title">聊天记录同步</div>
+        <div class="data-sync-row">
+          <button type="button" class="btn-ghost" id="btn-export">导出备份</button>
+          <button type="button" class="btn-ghost" id="btn-import">导入合并</button>
+          <input type="file" id="import-file" accept="application/json,.json" hidden>
+        </div>
+        <small>导出成一个文件，传到另一台设备后点「导入合并」。按修改时间自动合并，两边的记录都会保留，不会互相覆盖。API Key 不包含在备份里。</small>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-settings-cancel">取消</button>
+        <button type="submit" class="btn-primary">保存</button>
+      </div>
+    </form>
+
+    <!-- 设置最下方：MIT 许可证原文 -->
+    <section class="license">
+      <div class="license-title">开源许可证 · MIT License</div>
+      <pre class="license-text">MIT License
+
+Copyright (c) 2026 xue yi duan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.</pre>
+    </section>
+  </div>
+</div>
+
+<!-- 删除确认弹窗：讲清楚会丢什么，损失大的还要手打「删除」 -->
+<div class="modal-mask" id="confirm-modal" hidden>
+  <div class="modal modal-narrow">
+    <h2 id="confirm-title">确认删除</h2>
+    <div class="confirm-body" id="confirm-body"></div>
+    <label class="confirm-type" id="confirm-type-wrap" hidden>
+      这个内容不少，请输入 <b>删除</b> 两个字再继续
+      <input id="confirm-type-input" autocomplete="off" placeholder="删除" spellcheck="false">
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" id="confirm-cancel">取消</button>
+      <button type="button" class="btn-danger" id="confirm-ok" disabled>确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 上下文查看弹窗：显示这次真正会发给模型的内容 -->
+<div class="modal-mask" id="context-modal" hidden>
+  <div class="modal modal-wide">
+    <h2>发送给模型的上下文</h2>
+    <div class="ctx-meta" id="ctx-meta"></div>
+    <div class="ctx-body" id="ctx-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" id="ctx-copy">复制全部</button>
+      <button type="button" class="btn-primary" id="ctx-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 已否决版本弹窗：看这一条回复当时被否掉的其它版本，可以把任意一版换回来 -->
+<div class="modal-mask" id="veto-modal" hidden>
+  <div class="modal modal-wide">
+    <h2>已否决的版本</h2>
+    <div class="ctx-meta" id="veto-meta"></div>
+    <div class="ctx-body" id="veto-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-primary" id="veto-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 描写幅度（维度图）：调各环节的笔墨比重，应用后重新生成，旧版本自动进「已否决」 -->
+<div class="modal-mask" id="dims-modal" hidden>
+  <div class="modal modal-xwide">
+    <h2 id="dims-title">描写幅度（维度图）</h2>
+    <div class="ctx-meta" id="dims-meta"></div>
+    <!-- 维度那一栏：只在角色模式显示；直连模式是无提示词对话，不需要"笔墨比重" -->
+    <div id="dims-section">
+      <div class="dims-wrap">
+        <div class="dims-chart" id="dims-chart"></div>
+        <div class="dims-rows" id="dims-rows"></div>
+      </div>
+      <div class="dims-add">
+        <input type="text" id="dims-new-name" placeholder="加一个维度（例如：心理、气味、节奏）" maxlength="8">
+        <button type="button" class="btn-ghost" id="dims-add-btn">添加维度</button>
+      </div>
+    </div>
+
+    <div class="hint-box">
+      <div class="hint-head">
+        <span>给 AI 的微调提示</span>
+        <span class="hint-count" id="hint-count">0 / 500</span>
+      </div>
+      <textarea id="dims-hint" rows="5" maxlength="500"
+        placeholder="像对它说话一样写这一轮的要求，例如：&#10;这次让她主动一点，别问我想要什么；少说客套话，多写身体动作；别提钱和价钱。"></textarea>
+      <label class="check-row hint-once">
+        <span class="check-line">
+          <input type="checkbox" id="dims-hint-once">
+          <span>只在这次用（不记住）</span>
+        </span>
+        <small>不勾 = 一直用，写在上面每次生成都会带上，直到你清空它。</small>
+      </label>
+      <div class="limit-row">
+        <span>回复字数上限</span>
+        <input type="number" id="dims-maxchars" min="0" max="2000" step="10" value="0">
+        <span class="limit-unit">字</span>
+        <small><b>0 = 不限</b>。超过就在<b>句号处截断</b>（不会切断半句），裁掉的部分进「已否决」，随时能换回来。</small>
+      </div>
+    </div>
+
+    <div class="preset-box">
+      <div class="preset-head">
+        <span>提示预设 <small id="preset-count"></small></span>
+        <button type="button" class="btn-ghost btn-tiny" id="preset-save">把上面这句存为预设</button>
+      </div>
+      <div class="preset-list" id="preset-list"></div>
+    </div>
+
+    <div class="memo-box">
+      <div class="hint-head">
+        <span>场景备忘（地点 / 姿势 / 约定 / 称呼 / 正在做什么）</span>
+        <span class="hint-count" id="memo-count">0 / 800</span>
+      </div>
+      <textarea id="dims-memo" rows="3" maxlength="800"
+        placeholder="例：现在在浴室，热水已经放好；她还跪着没起来；说好这次不加价；她管我叫老板。"></textarea>
+      <div class="memo-foot">
+        <small>**改动立刻生效**，下一次生成就带上，不用重新生成。这一段会被当成<b>既成事实</b>（放在提示词最末尾，最容易记住）。</small>
+        <button type="button" class="btn-ghost btn-tiny" id="memo-clear">清空备忘</button>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" id="dims-off">关闭维度控制</button>
+      <button type="button" class="btn-ghost" id="dims-close">取消</button>
+      <button type="button" class="btn-primary" id="dims-apply">应用并重新生成</button>
+    </div>  </div>
+</div>
+
+<!-- 资料库：给这个角色喂一段背景资料，每轮自动挑相关的几块塞进提示词 -->
+<div class="modal-mask" id="know-modal" hidden>
+  <div class="modal modal-wide">
+    <h2>资料库</h2>
+    <div class="ctx-meta" id="know-meta"></div>
+    <p class="know-help">
+      把背景资料粘进来（世界观、人物经历、设定细节、特定段落都行）。每一轮会**自动挑最相关的几块**发给模型，
+      跟这一轮无关的不会被塞进去。用 <code>常驻:</code> 开头的那一块每轮都会带上。<br>
+      <b>资料只是参考，不是台词</b>：提示词里明确要求它别照抄、别念出来。空着 = 这个角色不注入资料。
+    </p>
+    <textarea id="know-text" rows="12" placeholder="例如：&#10;[常驻] 她左手腕上有一道旧疤，是十七岁那年留下的。&#10;&#10;她在那家小旅馆做了三年，老板姓周，工钱月结，从不拖欠。"></textarea>
+    <div class="memo-foot">
+      <small><span id="know-count">0</span> / <span id="know-max">500000</span> 字</small>
+      <small>每轮最多注入 <input type="number" id="know-budget" min="0" max="4000" step="50"> 字（0 = 不注入）</small>
+    </div>
+    <div class="memo-foot">
+      <label class="know-help" style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="know-semantic">
+        用<b>语义检索</b>（按意思找，不只是按字面）
+      </label>
+      <small>低于阈值就<b>一块都不注入</b>
+        <input type="number" id="know-threshold" min="0" max="0.9" step="0.05" style="width:4.5em">
+      </small>
+    </div>
+    <p class="know-help" style="margin:.4em 0 0">
+      <b>口语映射</b>（可选，每行一条 <code>口语=术语</code>）：语义检索偶尔会漏掉某些说法时，用它兜底。
+      命中的行会把右侧术语<b>追加</b>到提问里（不会替换你的原话）。
+    </p>
+    <textarea id="know-map" rows="3" placeholder="例如：&#10;电脑=计算机&#10;WiFi=无线网络&#10;身份证=居民身份证"></textarea>
+    <div class="limit-row">
+      <button type="button" class="btn-ghost btn-tiny" id="know-preview">预演：这一轮会挑中哪几块</button>
+      <small>用会话里最新一条你说的话去试挑，不消耗模型。</small>
+    </div>
+    <pre class="know-preview" id="know-picked" hidden></pre>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" id="know-clear">清空资料</button>
+      <button type="button" class="btn-ghost" id="know-cancel">取消</button>
+      <button type="button" class="btn-primary" id="know-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 常用语（直连模式）：口头禅 + 出现频率。不填 = 直连模式一个字都不注入 -->
+<div class="modal-mask" id="phrases-modal" hidden>
+  <div class="modal">
+    <h2>常用语（直连模式）</h2>
+    <p class="know-help">
+      直连模式默认<b>一条提示词都不加</b>；只有这里填了内容，才会在请求最前面多出这一小段 ——
+      而且只有这一段。写口头禅、习惯用词、固定语气，一行一个（也可用逗号 / 顿号分隔）。<br>
+      「出现频率」和角色卡里那个「常用词」档位是同一套（0 = 一次都不要用，10 = 当标志性口癖）。
+    </p>
+    <label>常用语 / 口头禅
+      <textarea id="phrases-text" rows="6" placeholder="例如：&#10;罢了&#10;少废话&#10;你懂什么" spellcheck="false"></textarea>
+    </label>
+    <label>出现频率
+      <div class="range-row">
+        <input type="range" id="phrases-level" min="0" max="10" step="1">
+        <output id="phrases-level-out">4 / 10</output>
+      </div>
+      <small id="phrases-how"></small>
+    </label>
+    <label>实际会发出去的那一段
+      <pre class="know-preview" id="phrases-preview"></pre>
+    </label>
+    <div class="modal-actions">
+      <button type="button" class="btn-ghost" id="phrases-clear">清空</button>
+      <button type="button" class="btn-ghost" id="phrases-cancel">取消</button>
+      <button type="button" class="btn-primary" id="phrases-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>
