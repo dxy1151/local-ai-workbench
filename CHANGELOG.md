@@ -1,5 +1,54 @@
 # 更新日志
 
+## 2.3.5 — 2026-11-04
+
+### 新：安卓平板部署（实测跑通）
+
+红魔平板3 Pro（骁龙 8 Elite / 12GB / Android 16）上**完整跑起来**了：
+工作台 v2.3.5 + qwen3-8b-v7k，纯 CPU 推理 **2.2 tok/s**，端到端对话实测通过。
+
+新增三样东西：
+
+| 文件 | 作用 |
+|---|---|
+| `tools/pack-android.sh` | 一键打安卓部署包（代码 + 数据 + 安装说明） |
+| `docs/安卓部署.md` | 完整踩坑记录 |
+| `android/` 下的 setup/run | 原有的 Termux 启动脚本，这次实测确认可用 |
+
+打包脚本会自动把配置改成平板能用的值：
+`proxy` 清空、`contextWindow` 16384→8192、关掉语义检索（平板没 embedding 模型）。
+
+### 记两个最容易踩的坑
+
+**① Termux 的 Node.js 起不来**
+
+```
+CANNOT LINK EXECUTABLE ".../node": cannot locate symbol
+"_ZNSt6__ndk113__hash_memoryEPKvm"
+```
+
+原因是 `libc++` 是 29 版、node v26 用 30 版编译的。修法：
+
+```bash
+apt-get install -y --reinstall libc++
+```
+
+**② Android 11+ 读不到 /sdcard/Download**
+
+Termux 没做 `termux-setup-storage` 授权时访问不了，`adb` 也绕不过（按 UID 隔离）。
+传文件要走 `/data/local/tmp` 中转：
+
+```bash
+adb push pkg.tar.gz /data/local/tmp/
+adb shell "run-as com.termux cp /data/local/tmp/pkg.tar.gz ~/"
+```
+
+### 顺带：工位电脑改成监听 0.0.0.0
+
+平板只当浏览器用时，电脑这边要把监听从 `127.0.0.1` 改成 `0.0.0.0`
+（`~/.config/systemd/user/xingye-chat.service` 的 ExecStart 最后一段）。
+这样同一个 Wi-Fi 下平板直接开 `http://电脑IP:5178` 就能用，速度 20~40 tok/s。
+
 ## 2.3.4 — 2026-11-04
 
 ### 修：聊天里"挑一个会出现思考过程"
