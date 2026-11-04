@@ -1,5 +1,38 @@
 # 更新日志
 
+## 2.3.3 — 2026-11-04
+
+### 新：角色卡「允许短回复」（allowShort）
+
+**问题**：工作台有 14 字硬下限（`bareLen < 14` → 判"内容不完整"→ 丢弃报错）。
+可"冷淡话少"这类人设本来就该一两句完事 —— 实测阿梅那张卡回的是
+`（指节敲床沿）三百。`（7 字），两次重抽都短，最后直接报错，用户看到的就是
+"这个角色老是回不出东西"。
+
+**修法**：角色卡加 `allowShort` 字段（表单里是「允许短回复」勾选框）。
+打开后硬下限从 14 字放宽到 4 字，只拦真正的空壳。
+
+### 新：注册 emerv-qwen3-8b-q4
+
+`/home/don0ox1/下载/emerv-qwen3-8b-q4.gguf`（4.7G，qwen3 架构 8.2B Q4）已注册进 Ollama：
+
+```
+ollama create emerv-qwen3-8b-q4 -f Modelfile
+# num_ctx 16384，temperature 0.85，stop <|im_end|> / <|endoftext|>
+```
+
+实测四张城中村卡全部可用，字数比 v7k 更克制（10~41 字），
+不会像 v7k 那样偶尔写到 200+ 字。
+
+⚠ 这个模型也会把正文分流进 thinking 通道（首次测试 `content:0 / thinking:101`），
+v2.2.2 的 salvage 兜底已经覆盖。
+
+### 修：工作台角色卡/会话全空（data-dir.txt 被改成 Windows 路径）
+
+`/mnt/data4t/xingye-chat-portable/data-dir.txt` 在 14:53 被改成 `L:\workbench-data`
+（Windows 版用的路径）。Linux 下 `L:` 只是普通文件名，服务读到一个空目录，
+角色 0 个、会话 0 个。改回 `/home/don0ox1/xingye-sync` 后 40 角色 / 74 会话全部恢复。
+
 ## 2.3.2 — 2026-11-04
 
 ### 修：回复开头冒出 `<>` / `↑` / `</>` / `-`（垃圾碎片）

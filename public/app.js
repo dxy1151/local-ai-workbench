@@ -194,6 +194,7 @@ function openCharacterModal(character = null) {
   form.tagline.value = character?.tagline || '';
   form.gender.value = character?.gender || '';
   form.partnerGender.value = character?.partnerGender || '';
+  if (form.allowShort) form.allowShort.checked = character?.allowShort === true;
   form.persona.value = character?.persona || '';
   form.scenario.value = character?.scenario || '';
   form.greeting.value = character?.greeting || '';
@@ -289,6 +290,7 @@ async function submitCharacter(e) {
     tagline: form.tagline.value,
     gender: form.gender.value,
     partnerGender: form.partnerGender.value,
+    allowShort: form.allowShort ? form.allowShort.checked : false,
     persona: form.persona.value,
     scenario: form.scenario.value,
     greeting: form.greeting.value,
