@@ -542,6 +542,7 @@ function fillSettingsForm() {
   form.workGuard.checked = Boolean(config.workGuard);
   form.extraBody.value = config.extraBody || '';
   form.thinkOff.checked = config.thinkOff === true;
+  if (form.showReasoning) form.showReasoning.checked = config.showReasoning === true;
   form.reasoningEffort.value = ['none', 'low', 'high', 'max'].includes(config.reasoningEffort)
     ? config.reasoningEffort : 'high';
   // 多人卡每轮开口几率（v1.7.2）
@@ -600,6 +601,7 @@ async function submitSettings(e) {
     workGuard: form.workGuard.checked,
     extraBody: form.extraBody.value.trim(),
     thinkOff: form.thinkOff.checked,
+    showReasoning: form.showReasoning ? form.showReasoning.checked : false,
     reasoningEffort: form.reasoningEffort.value,
     keywordActions: form.keywordActions.value,
     rlEnabled: form.rlEnabled.checked,

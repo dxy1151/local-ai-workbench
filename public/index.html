@@ -295,6 +295,13 @@
         </span>
         <small>会思考的模型（Qwen3 / Gemma 3-4 / R1）不关的话，会先写一大段思考再回答 —— 实测 v2 不关思考 21.7 秒 / 667 token，关掉 6.2 秒 / 85 token。<b>开关会按模型自动选对方式</b>：Qwen3 走系统提示词里的 <code>/no_think</code>，Gemma 3-4 走请求体的 <code>think:false</code>（往 Gemma 的 system 里塞 <code>/no_think</code> 不但无效，还会让它把这句话当对话内容读，反而更慢：21.7s → 28.3s）。聊天页右上角也有同一个开关。</small>
       </label>
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="showReasoning">
+          <span>显示思考过程</span>
+        </span>
+        <small>默认关闭。有些模型（如 emerv-qwen3-8b-q4）会随机进思考模式，吐的是"金额是交易的基础，但不是全部…"这种跟角色无关的哲学废话，展开在聊天页上很出戏。关掉后思考过程<b>不保存、不显示</b>；想看再勾上。</small>
+      </label>
       <label>推理强度（云端思考型模型，如 DeepSeek V4 Flash）
         <select name="reasoningEffort">
           <option value="none">关（不思考 / none）</option>
