@@ -108,6 +108,7 @@
       <button class="icon-btn" id="btn-ollama-free" title="立刻释放显存" hidden>🧹</button>
       <button class="icon-btn" id="btn-knowledge" title="资料库：给这个角色喂背景资料" hidden>📚</button>
       <button class="icon-btn" id="btn-direct-phrases" title="常用语：给直连模式加一组口头禅 + 出现频率" hidden>💬</button>
+      <button class="icon-btn" id="btn-branch" title="其他分支：关 —— 点一下打开（开着时每一轮额外生成 2 个走向）" hidden>🌿</button>
       <button class="icon-btn" id="btn-edit-character" title="编辑人设" hidden>✎</button>
       <button class="icon-btn" id="btn-clear" title="清空当前会话" hidden>🗑</button>
     </header>
@@ -117,6 +118,16 @@
         <div class="empty-icon">✦</div>
         <p>还没有开始对话</p>
       </div>
+    </div>
+
+    <div class="branch-panel" id="branch-panel" hidden>
+      <div class="branch-head">
+        <b>🌿 其他分支</b>
+        <span id="branch-sub">开着：每轮多给 2 个别的走向，点一个换掉那条回复</span>
+        <span style="flex:1"></span>
+        <button type="button" class="btn-ghost btn-tiny" id="branch-close">关掉分支</button>
+      </div>
+      <div class="branch-list" id="branch-list"></div>
     </div>
 
     <div class="usage-bar" id="usage-bar" hidden></div>
@@ -334,6 +345,13 @@
           <span class="check-hint" id="think-hint"></span>
         </span>
         <small>会思考的模型（Qwen3 / Gemma 3-4 / R1）不关的话，会先写一大段思考再回答 —— 实测 v2 不关思考 21.7 秒 / 667 token，关掉 6.2 秒 / 85 token。<b>开关会按模型自动选对方式</b>：Qwen3 走系统提示词里的 <code>/no_think</code>，Gemma 3-4 走请求体的 <code>think:false</code>（往 Gemma 的 system 里塞 <code>/no_think</code> 不但无效，还会让它把这句话当对话内容读，反而更慢：21.7s → 28.3s）。聊天页右上角也有同一个开关。</small>
+      </label>
+      <label class="check-row">
+        <span class="check-line">
+          <input type="checkbox" name="thinkForce">
+          <span>强制开思考</span>
+        </span>
+        <small>有些微调模型（如 qwen3-8b-v7k）**默认就不思考**，光取消「关掉思考」等于没开。勾这个会明确传 <code>think:true</code>，并把输出预算提到 4000。<b>注意：这类模型的思考会吃掉大部分预算，正文可能变短</b>——实测思考 ~270 字、正文只剩几个字。</small>
       </label>
       <label class="check-row">
         <span class="check-line">

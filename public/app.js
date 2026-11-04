@@ -543,6 +543,7 @@ function fillSettingsForm() {
   form.extraBody.value = config.extraBody || '';
   form.thinkOff.checked = config.thinkOff === true;
   if (form.showReasoning) form.showReasoning.checked = config.showReasoning === true;
+  if (form.thinkForce) form.thinkForce.checked = config.thinkForce === true;
   form.reasoningEffort.value = ['none', 'low', 'high', 'max'].includes(config.reasoningEffort)
     ? config.reasoningEffort : 'high';
   // 多人卡每轮开口几率（v1.7.2）
@@ -602,6 +603,7 @@ async function submitSettings(e) {
     extraBody: form.extraBody.value.trim(),
     thinkOff: form.thinkOff.checked,
     showReasoning: form.showReasoning ? form.showReasoning.checked : false,
+    thinkForce: form.thinkForce ? form.thinkForce.checked : false,
     reasoningEffort: form.reasoningEffort.value,
     keywordActions: form.keywordActions.value,
     rlEnabled: form.rlEnabled.checked,
@@ -718,6 +720,7 @@ async function openSession(id) {
     updateChatHeader();
     renderSessions();
     setNav(false); // 手机上选完会话自动收起抽屉
+    syncBranchPanel();   // 🌿 开关开着就补上分支面板
   } catch (err) {
     toast(err.message, true);
   }
@@ -857,6 +860,7 @@ async function openDirectSession(id) {
     updateChatHeader();
     renderDirectSessions();
     enableComposer(true);
+    syncBranchPanel();   // 🌿 开关开着就补上分支面板
     setNav(false); // 手机上选完会话自动收起抽屉
   } catch (err) {
     toast(err.message, true);
@@ -2668,6 +2672,11 @@ async function streamReply(payload) {
     state.abort = null;
     updateSendState();
     await refreshCurrentMode();
+    // v2.3.14 🌿 开关开着：这一轮生成完自动再给 2 个走向。
+    // 不 await —— 分支是模型再跑两次，没必要卡住输入框；失败就静默（面板里会显示原因）。
+    if (branchIsOn() && branchLastAssistantIndex() >= 0) {
+      Promise.resolve().then(() => generateBranches()).catch(() => {});
+    }
     // v2.0.0：生成结束后**重新同步评分条**。
     // 之前 syncRlBar() 只在流式开始时被调用过（那时 streaming=true，提交按钮被禁用），
     // 结束后没有人再调一次 → 「提交评分」一直是灰的（实测踩到）。
@@ -2977,6 +2986,8 @@ function updateChatHeader() {
     $('#btn-think').hidden = false;       // 🧠 思考开关：两种模式都能用
     $('#btn-presend').hidden = true;      // 🎲 预选只对角色模式有效
     $('#btn-suggest').hidden = true;      // 🙋 同上
+    $('#btn-branch').hidden = false;      // 🌿 其他分支：两种模式都能用
+    updateBranchButton();
     updateThinkButton();
     // 💬 常用语：直连模式唯一会注入的一段（没填就还是零提示词），标题上直接写清楚当前状态
     const ph = phrasesInfo();
@@ -3005,6 +3016,7 @@ function updateChatHeader() {
     $('#btn-think').hidden = true;
     $('#btn-presend').hidden = true;
     $('#btn-suggest').hidden = true;
+    $('#btn-branch').hidden = true;
     $('#btn-direct-phrases').hidden = true;
     updatePlaceholder();
     updateSendState();
@@ -3021,6 +3033,8 @@ function updateChatHeader() {
   $('#btn-websearch').hidden = false;
   $('#btn-presend').hidden = false;         // 🎲 预选回复：先演 4 版再挑
   $('#btn-suggest').hidden = false;         // 🙋 该我说什么：帮我起个头
+  $('#btn-branch').hidden = false;          // 🌿 其他分支：换掉上一条回复
+  updateBranchButton();                     // 开关开着就保持 .is-on 高亮
   $('#btn-think').hidden = false;           // 🧠 思考开关
   $('#btn-direct-phrases').hidden = true;   // 常用语是直连模式的东西；角色用角色卡的「常用词」
   updateAutoSpeakButton();
@@ -3135,6 +3149,7 @@ function bindEvents() {
   });
   $('#cloud-back-btn').addEventListener('click', switchToCloud);
   wireAuthSettings();
+  wireBranchPanel();
   $('#export-training-btn')?.addEventListener('click', exportTraining);
 
   $('#btn-export').addEventListener('click', exportBackup);
@@ -5428,4 +5443,153 @@ function wireAuthSettings() {
   });
 
   loadAuthStatus();
+}
+
+// ---- 其他分支（v2.3.11）----
+// 额外生成 2 个别样的走向，点一个就换掉上一条角色回复。
+// 和「🎲 挑一个」的区别：
+//   · 挑一个 生成 4 个、面板是浮层、选中的进标准库（训练用）
+//   · 其他分支 只生成 2 个、面板常驻在聊天下方、单纯换个走向，不进训练
+// v2.3.14：改成真正的开关（state.branchOn，存 config.branchOn）——
+//   打开后每轮角色回复完自动续 2 个走向，不用每轮手点；关掉面板就收起来。
+const BRANCH_KEY = 'branchOn';
+function branchIsOn() {
+  return !!(state.config && state.config[BRANCH_KEY] === true);
+}
+
+function updateBranchButton() {
+  const btn = $('#btn-branch');
+  if (!btn) return;
+  const on = branchIsOn();
+  btn.classList.toggle('is-on', on);
+  btn.title = on
+    ? '其他分支：开（每轮自动多出 2 个走向）—— 点一下关掉'
+    : '其他分支：关 —— 点一下打开（开着时每一轮额外生成 2 个走向）';
+}
+
+// 切会话 / 换会话后：开关还开着就把分支面板重新补上，否则收起来
+function syncBranchPanel() {
+  const panel = $('#branch-panel');
+  if (!panel) return;
+  if (!branchIsOn()) { panel.hidden = true; return; }
+  if (branchLastAssistantIndex() < 0 || !activeSessionId()) { panel.hidden = true; return; }
+  generateBranches();
+}
+
+async function toggleBranch() {
+  const on = !branchIsOn();
+  try {
+    await api('/api/config', { method: 'PUT', body: JSON.stringify({ [BRANCH_KEY]: on }) });
+    state.config = { ...(state.config || {}), [BRANCH_KEY]: on };
+    updateBranchButton();
+    const panel = $('#branch-panel');
+    if (!on) {
+      if (panel) panel.hidden = true;
+      toast('已关掉其他分支');
+      return;
+    }
+    toast('已打开其他分支：每轮多给 2 个走向');
+    // 打开时如果上一条回复还在，立刻补一次走向，不必等下一轮
+    if (branchLastAssistantIndex() >= 0) await generateBranches();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function branchLastAssistantIndex() {
+  const msgs = state.messages || [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant' && String(msgs[i].content || '').trim()) return i;
+  }
+  return -1;
+}
+
+function renderBranchPanel(list) {
+  const box = $('#branch-list');
+  if (!box) return;
+  box.innerHTML = list.map((c, i) => `
+    <div class="branch-item" data-i="${i}">
+      <div class="branch-body">${escapeHtml(c.text)}</div>
+      <div class="branch-actions">
+        <span class="branch-meta">分支 ${i + 1}</span>
+        <button type="button" class="btn-primary btn-tiny branch-pick" data-i="${i}">用这条</button>
+      </div>
+    </div>`).join('');
+}
+
+async function generateBranches() {
+  const panel = $('#branch-panel');
+  const list = $('#branch-list');
+  const sub = $('#branch-sub');
+  if (!panel || !list) return;
+  const sessionId = state.mode === 'direct' ? state.activeDirectId : state.activeSessionId;
+  if (!sessionId) { toast('先打开一个会话', true); return; }
+  const idx = branchLastAssistantIndex();
+  if (idx < 0) { toast('还没有角色回复可以替换', true); return; }
+
+  panel.hidden = false;
+  list.innerHTML = '<div class="branch-loading">正在生成 2 个别的走向…（温度调高了，会和原来不一样）</div>';
+  if (sub) sub.textContent = '生成中…';
+
+  try {
+    const r = await api('/api/gold/generate', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId, n: 2, endIndex: idx }),
+    });
+    // 过滤掉和原来一字不差的（模型偶尔会原样复读）
+    const original = String((state.messages[idx] || {}).content || '').trim();
+    const seen = new Set([original]);
+    const picked = [];
+    for (const c of (r.candidates || [])) {
+      const t = String(c.text || '').trim();
+      if (!t || seen.has(t)) continue;
+      seen.add(t);
+      picked.push({ ...c, text: t });
+      if (picked.length >= 2) break;
+    }
+    if (!picked.length) {
+      list.innerHTML = '<div class="branch-err">两个都和原来一样，再点一次 🌿 试试</div>';
+      if (sub) sub.textContent = '没生成出不同的分支';
+      return;
+    }
+    renderBranchPanel(picked);
+    if (sub) sub.textContent = `共 ${picked.length} 个别的走向 · 点一个换掉上一条`;
+    panel.dataset.msgIndex = String(idx);
+    panel.dataset.sessionId = sessionId;
+
+    list.querySelectorAll('.branch-pick').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const i = Number(btn.dataset.i);
+        const text = picked[i]?.text || '';
+        if (!text) return;
+        btn.disabled = true;
+        try {
+          await replaceMessage(Number(panel.dataset.msgIndex), text, '其他分支');
+          toast('已换成这条分支');
+          panel.hidden = false;
+          // 换完把面板留在原地；开关开着的话，下一轮回复完会自动再续 2 个
+          if (sub) sub.textContent = '已换用这条 · 下一轮会自动再给 2 个走向';
+        } catch (e) {
+          toast(e.message, true);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch (e) {
+    list.innerHTML = `<div class="branch-err">生成失败：${escapeHtml(e.message)}</div>`;
+    if (sub) sub.textContent = '生成失败';
+  }
+}
+
+function wireBranchPanel() {
+  $('#btn-branch')?.addEventListener('click', () => { toggleBranch(); });
+  // 面板上的「关掉分支」= 直接把开关关掉，不只是收起面板
+  $('#branch-close')?.addEventListener('click', () => {
+    if (branchIsOn()) toggleBranch();
+    else {
+      const panel = $('#branch-panel');
+      if (panel) panel.hidden = true;
+    }
+  });
 }

@@ -1548,3 +1548,24 @@ body {
   border:1px solid #3a4040;margin-left:6px}
 .auth-badge.on{color:#7ee787;border-color:#2f6b3a;background:#12261a}
 .auth-badge.off{color:#8b929c;border-color:#3a4048;background:#20242a}
+
+/* ---- 其他分支面板（v2.3.11）---- */
+.branch-panel{margin:10px 14px 0;border:1px solid #2f4a3a;border-radius:12px;
+  background:#131c17;overflow:hidden}
+.branch-head{display:flex;align-items:center;gap:8px;padding:10px 12px;
+  background:#16241c;border-bottom:1px solid #2a3d31;font-size:13px;flex-wrap:wrap}
+.branch-head b{color:#9be3b0}
+/* v2.3.14：面板本身就是「开关开着」的证据，加一条左侧绿边更好认 */
+.branch-panel{border-left:3px solid #3f6b4e}
+.branch-head span{color:#7d9186;font-size:12px}
+.branch-list{display:flex;flex-direction:column;gap:1px;max-height:44vh;overflow:auto}
+.branch-item{display:flex;flex-direction:column;gap:8px;padding:11px 12px;
+  background:#0f1512;border-top:1px solid #1e2b23}
+.branch-item:first-child{border-top:0}
+.branch-item .branch-body{white-space:pre-wrap;word-break:break-word;line-height:1.65;
+  color:#dfe6e1;font-size:13px}
+.branch-actions{display:flex;align-items:center;gap:8px}
+.branch-meta{color:#6d7f74;font-size:11px}
+.branch-pick{margin-left:auto}
+.branch-loading{padding:16px 12px;color:#7d9186;font-size:13px;text-align:center}
+.branch-err{padding:14px 12px;color:#ff8b8b;font-size:13px}
