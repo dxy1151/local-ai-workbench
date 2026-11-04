@@ -1,5 +1,64 @@
 # 更新日志
 
+## 2.3.6 — 2026-11-04
+
+### 修：「模型还是只有平板 v7k」—— 远程 Ollama 的模型列表看不到
+
+**现象**：平板上的工作台把 `baseUrl` 指向电脑的 Ollama（`http://100.124.214.66:11434/v1`）
+之后，设置页的模型列表**只有平板自己那一个 v7k**，电脑里的 45 个完全不出现。
+
+**两个地方都写死了只认 `127.0.0.1`**：
+
+**① `lib/ollama.js` 的 `localOllamaBase()`**
+
+```js
+// 旧：只认本机回环地址
+return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(base) ? base : '';
+```
+
+`http://100.124.214.66:11434` 不匹配 → 返回空串 → 上层回退到 `127.0.0.1`
+→ 查的永远是平板自己的 Ollama。
+
+**② `lib/server.js` 的 `/api/local-models`**
+
+```js
+const OLLAMA_LOCAL = 'http://127.0.0.1:11434/v1';   // 写死
+let out = await listLocalModels({ ...config, baseUrl: OLLAMA_LOCAL });
+```
+
+**修法**：
+
+- `localOllamaBase()` 扩到「私有网段 + Tailscale 100.64/10 + 任意公网 IP」
+  都算本地 Ollama（只要不是 `api.deepseek.com` 这类云服务）
+- `/api/local-models` **两个都查再合并去重**：本机 `127.0.0.1` + 当前 `baseUrl`
+- 保留原来「写死查本机」的用意（切到 llama-server 时还得能点回 Ollama 的模型）
+
+**验证**（平板 → 电脑）：
+
+| | 修复前 | 修复后 |
+|---|---|---|
+| 本地/远程 Ollama 模型 | **1** | **46** |
+| 列表总数（含云端） | 4 | **49** |
+
+### 顺带：Ollama 监听 0.0.0.0
+
+平板要连电脑的 Ollama，电脑这边得放开监听：
+
+```bash
+cat > ~/.config/systemd/user/ollama.service.d/25-lan.conf <<'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+EOF
+systemctl --user daemon-reload && systemctl --user restart ollama
+```
+
+实测切换后的速度差：
+
+| 后端 | 同一句回复 |
+|---|---|
+| 电脑（RTX 5060 Ti） | **6 秒** |
+| 平板（骁龙 8 Elite 纯 CPU） | **45 秒** |
+
 ## 2.3.5 — 2026-11-04
 
 ### 新：安卓平板部署（实测跑通）
