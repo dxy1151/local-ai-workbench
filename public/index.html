@@ -279,6 +279,46 @@
         <div id="export-training-result" class="lm-list"><div class="lm-empty">点上面的按钮统计能导出多少条</div></div>
         <small>用的是<b>每轮真实发出去的上下文</b>，所以训出来的风格能直接用在聊天里。会话列表每一项左边的 <b>🧠</b> 可以直接用那个会话训练。</small>
       </div>
+      <div class="local-models-box">
+        <div class="lm-head">
+          <span>🔐 远程访问安全</span>
+          <span>
+            <button type="button" class="btn-ghost btn-tiny" id="auth-refresh">刷新状态</button>
+          </span>
+        </div>
+        <div id="auth-status" class="lm-list"><div class="lm-empty">读取中…</div></div>
+
+        <div class="auth-section">
+          <div class="auth-row">
+            <input type="password" id="auth-new-pass" placeholder="新口令（至少 6 位）" autocomplete="new-password">
+            <input type="password" id="auth-new-pass2" placeholder="再输一次">
+            <button type="button" class="btn-ghost btn-tiny" id="auth-save-pass">改口令</button>
+          </div>
+          <small>手机/平板/外网访问工作台时要输这个。<b>本机（127.0.0.1）免密</b>，改完本机不用重新登录。</small>
+        </div>
+
+        <div class="auth-section">
+          <div class="auth-row">
+            <span id="totp-label">两步验证（2FA）</span>
+            <button type="button" class="btn-ghost btn-tiny" id="totp-toggle">开启</button>
+          </div>
+          <div id="totp-panel" hidden>
+            <div id="totp-qr" class="totp-qr"></div>
+            <div class="totp-manual">
+              <small>扫不了码就手动输入这串密钥：</small>
+              <code id="totp-secret"></code>
+            </div>
+            <div class="auth-row" style="margin-top:10px">
+              <input type="text" id="totp-code" inputmode="numeric" maxlength="6"
+                     placeholder="输入验证器上的 6 位数字" autocomplete="one-time-code">
+              <button type="button" class="btn-ghost btn-tiny" id="totp-confirm">确认开启</button>
+              <button type="button" class="btn-ghost btn-tiny" id="totp-cancel">取消</button>
+            </div>
+            <small>用 Google Authenticator / Aegis / 1Password 扫码。开启后，远程登录要<b>口令 + 验证码</b>两道。</small>
+          </div>
+          <small id="totp-hint" class="auth-hint"></small>
+        </div>
+      </div>
       <label>识图模型（📷 用，本地视觉模型）
         <input name="visionModel" placeholder="qwen2.5vl:3b" list="model-list">
         <small>输入框左边的 📷 用它来描述图片。<b>必须带视觉（vision）能力</b>，而且得在本机 Ollama 里 —— 聊天用的模型多半是纯文本的，发图过去只会报错。留空 = 用默认的 <code>qwen2.5vl:3b</code>（Ollama 官方视觉模型，约 3.2GB）。</small>

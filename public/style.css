@@ -1530,3 +1530,21 @@ body {
 .rl-submit:disabled { opacity: .4; cursor: default; }
 .rl-submit:not(:disabled):hover { background: rgba(127, 184, 255, .15); }
 .rl-toggle small { display: block; line-height: 1.5; opacity: .85; margin-top: 4px; }
+
+/* ---- 远程访问安全（v2.3.9）---- */
+.auth-section{margin-top:14px;padding-top:12px;border-top:1px solid #2d323a}
+.auth-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.auth-row input{flex:1;min-width:120px;box-sizing:border-box;padding:8px 10px;border-radius:8px;
+  border:1px solid #33383f;background:#22262e;color:inherit;font-size:13px}
+.auth-row input:focus{outline:none;border-color:#5aa0ff}
+.auth-hint{display:block;margin-top:8px;color:#8b929c}
+.totp-qr{display:grid;justify-items:center;margin:12px 0;padding:10px;background:#fff;border-radius:8px}
+.totp-qr canvas{image-rendering:pixelated;max-width:100%;height:auto}
+.totp-manual{margin-top:6px;color:#8b929c}
+.totp-manual code{display:inline-block;margin-top:4px;padding:4px 8px;border-radius:6px;
+  background:#22262e;border:1px solid #33383f;color:#9fd0ff;letter-spacing:.08em;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+.auth-badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;
+  border:1px solid #3a4040;margin-left:6px}
+.auth-badge.on{color:#7ee787;border-color:#2f6b3a;background:#12261a}
+.auth-badge.off{color:#8b929c;border-color:#3a4048;background:#20242a}

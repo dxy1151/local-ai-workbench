@@ -3134,6 +3134,7 @@ function bindEvents() {
     if ($('#local-models')?.querySelector('.lm-row')) loadLocalModels();
   });
   $('#cloud-back-btn').addEventListener('click', switchToCloud);
+  wireAuthSettings();
   $('#export-training-btn')?.addEventListener('click', exportTraining);
 
   $('#btn-export').addEventListener('click', exportBackup);
@@ -5291,4 +5292,140 @@ function bindXingyeEvents() {
       }
     });
   });
+}
+
+
+// ---- 远程访问安全（v2.3.9）：改口令 + 两步验证 ----
+// 安全设置只允许本机改（服务端 /api/auth/* 里也校验了 isLoopback）。
+let pendingTotpSecret = '';
+
+async function loadAuthStatus() {
+  const box = $('#auth-status');
+  if (!box) return;
+  try {
+    const r = await fetch('/api/auth/status');
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      box.innerHTML = `<div class="lm-empty">${j.error || '读不到状态（安全设置只能在本机改）'}</div>`;
+      return;
+    }
+    const st = await r.json();
+    const passBadge = st.hasPassword
+      ? `<span class="auth-badge on">已设口令</span>${st.source === 'env' ? '<span class="auth-badge off" style="margin-left:4px">来自环境变量</span>' : ''}`
+      : '<span class="auth-badge off">未设口令（不设就等于对公网完全敞开）</span>';
+    const totpBadge = st.totpEnabled
+      ? '<span class="auth-badge on">已开启</span>'
+      : '<span class="auth-badge off">未开启</span>';
+    box.innerHTML = `
+      <div class="lm-item" style="cursor:default">
+        <div class="lm-main">
+          <div class="lm-name">访问口令 ${passBadge}</div>
+          <div class="lm-sub">手机 / 平板 / 外网访问时必须输入；本机 127.0.0.1 免密</div>
+        </div>
+      </div>
+      <div class="lm-item" style="cursor:default">
+        <div class="lm-main">
+          <div class="lm-name">两步验证 ${totpBadge}</div>
+          <div class="lm-sub">开启后远程登录要「口令 + 验证器 6 位数字」</div>
+        </div>
+      </div>`;
+    const btn = $('#totp-toggle');
+    const hint = $('#totp-hint');
+    if (btn) btn.textContent = st.totpEnabled ? '关闭' : '开启';
+    if (hint) hint.textContent = st.totpEnabled
+      ? '已开启。关闭后远程只需口令 —— 建议先确认口令足够复杂。'
+      : '开启后即使口令泄露，别人没有你手机上的验证码也进不来。';
+  } catch (e) {
+    box.innerHTML = `<div class="lm-empty">读取失败：${e.message}</div>`;
+  }
+}
+
+/** 把二维码矩阵画成 canvas（服务端给的是二维布尔数组，不传图片）。 */
+function drawQr(canvas, matrix) {
+  const n = matrix.length;
+  const scale = Math.max(2, Math.floor(220 / n));
+  const quiet = 4;                      // 标准要求四周留 4 格空白，少了扫不出来
+  const total = (n + quiet * 2) * scale;
+  canvas.width = total;
+  canvas.height = total;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, total, total);
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (!matrix[r][c]) continue;
+      ctx.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
+    }
+  }
+}
+
+function wireAuthSettings() {
+  $('#auth-refresh')?.addEventListener('click', loadAuthStatus);
+
+  $('#auth-save-pass')?.addEventListener('click', async () => {
+    const a = $('#auth-new-pass')?.value || '';
+    const b = $('#auth-new-pass2')?.value || '';
+    if (a.length < 6) return toast('口令至少 6 位');
+    if (a !== b) return toast('两次输入不一致');
+    const r = await fetch('/api/auth/password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: a }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(j.error || '改口令失败');
+    if ($('#auth-new-pass')) $('#auth-new-pass').value = '';
+    if ($('#auth-new-pass2')) $('#auth-new-pass2').value = '';
+    toast('口令已改（本机免密，不用重新登录）');
+    loadAuthStatus();
+  });
+
+  $('#totp-toggle')?.addEventListener('click', async () => {
+    const panel = $('#totp-panel');
+    // 已开启 → 关闭
+    if ($('#totp-toggle')?.textContent === '关闭') {
+      if (!confirm('关掉两步验证后，远程只需口令就能登录。确定？')) return;
+      const r = await fetch('/api/auth/totp/disable', { method: 'POST' });
+      if (r.ok) { toast('两步验证已关闭'); loadAuthStatus(); } else toast('关闭失败');
+      return;
+    }
+    // 未开启 → 生成密钥并显示二维码
+    const r = await fetch('/api/auth/totp/new', { method: 'POST' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(j.error || '生成失败');
+    pendingTotpSecret = j.secret;
+    if (panel) panel.hidden = false;
+    if ($('#totp-secret')) $('#totp-secret').textContent = j.secret.replace(/(.{4})/g, '$1 ').trim();
+    const qrBox = $('#totp-qr');
+    if (qrBox) {
+      qrBox.innerHTML = '';
+      const cv = document.createElement('canvas');
+      qrBox.appendChild(cv);
+      try { drawQr(cv, j.matrix); } catch (e) { qrBox.innerHTML = '<div style="color:#000">二维码画不出来，用手动密钥</div>'; }
+    }
+    if ($('#totp-code')) { $('#totp-code').value = ''; $('#totp-code').focus(); }
+  });
+
+  $('#totp-confirm')?.addEventListener('click', async () => {
+    const code = ($('#totp-code')?.value || '').replace(/\D/g, '');
+    if (code.length !== 6) return toast('请输入 6 位验证码');
+    const r = await fetch('/api/auth/totp/enable', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: pendingTotpSecret, code }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return toast(j.error || '验证码不对');
+    toast('两步验证已开启');
+    if ($('#totp-panel')) $('#totp-panel').hidden = true;
+    pendingTotpSecret = '';
+    loadAuthStatus();
+  });
+
+  $('#totp-cancel')?.addEventListener('click', () => {
+    if ($('#totp-panel')) $('#totp-panel').hidden = true;
+    if ($('#totp-code')) $('#totp-code').value = '';
+    pendingTotpSecret = '';
+  });
+
+  loadAuthStatus();
 }
