@@ -1,5 +1,32 @@
 # 更新日志
 
+## 2.3.7 — 2026-11-04
+
+### 新：电脑 ↔ 平板 聊天记录双向同步（Syncthing）
+
+两边各跑一份工作台时，写完的会话要能互通。用 Syncthing 同步
+`~/xingye-sync`（电脑）↔ `~/xingye-chat/data`（平板）。
+
+**为什么不用 Git**：这台机器到 GitHub 的 SSH 极不稳定（实测成功率 2/6），
+没法做实时同步。Syncthing 走局域网直连，跟 GitHub 无关。
+
+**实测**：
+
+| 操作 | 结果 |
+|---|---|
+| 电脑新建会话 | **10 秒内**出现在平板 |
+| 文件完整性 | MD5 完全一致 |
+| 电脑删除会话 | 平板同步删除 |
+| 平板重启后 | 继续正常工作 |
+
+**忽略规则**（`~/xingye-sync/.stignore`）排除了 `.git`、`*.bak`、30MB 的
+`_shared.md`、`wiki-raw`、`rl-labels` —— 同步量从 54MB 降到 32MB。
+
+`~/start-tablet.sh` 现在按 **Syncthing → Ollama → 工作台** 的顺序启动。
+
+⚠️ **踩坑**：Termux 里的 syncthing 进程有时「在跑但没监听端口」（僵尸进程），
+表现为 API 返回 `000`。`pkill -f syncthing` 后重启即可。
+
 ## 2.3.6 — 2026-11-04
 
 ### 修：「模型还是只有平板 v7k」—— 远程 Ollama 的模型列表看不到
