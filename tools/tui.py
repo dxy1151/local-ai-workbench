@@ -186,7 +186,8 @@ class XingyeTUI(App):
         ("f4", "tab('tab-direct')", "直连"),
         ("ctrl+n", "new_session", "新会话"),
         ("ctrl+r", "reload", "刷新"),
-        ("ctrl+t", "toggle_think", "思考"),
+        ("ctrl+t", "toggle_think", "思考开关"),
+        ("ctrl+e", "cycle_effort", "思考强度"),
         ("ctrl+c", "quit", "退出"),
     ]
 
@@ -559,6 +560,19 @@ class XingyeTUI(App):
         self.set_status(f"准备用「{name}」开新会话")
         self.query_one("#input", Input).focus()
 
+    def action_cycle_effort(self) -> None:
+        """Ctrl+E：循环切思考强度 none → low → high → max"""
+        order = ["none", "low", "high", "max"]
+        cur = self.cfg.get("reasoningEffort") or "high"
+        nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "high"
+        try:
+            self.wb.put("/api/config", {"reasoningEffort": nxt})
+            self.cfg = self.wb.get("/api/config")
+        except Exception as e:  # noqa: BLE001
+            self.set_status(f"切换失败：{e}")
+            return
+        self.update_status()
+
     def action_reload(self) -> None:
         self.load_chars()
         self.load_sessions()
@@ -583,7 +597,10 @@ class XingyeTUI(App):
     def update_status(self) -> None:
         if not self.cfg:
             return
-        think = "思考关" if self.cfg.get("thinkOff") else "思考开"
+        # 思考状态：DeepSeek V4 这类模型认的是 reasoning_effort（none/low/high/max），
+        # 和本地 Ollama 的 thinkOff 是两套机制。两个都显示，不然看不出「现在几档」。
+        effort = self.cfg.get("reasoningEffort") or "high"
+        think = "思考关" if self.cfg.get("thinkOff") else f"思考 {effort}"
         if self.cur:
             mode = "直连" if self.cur.get("direct") else f"角色 {(self.cur_char or {}).get('name', '?')}"
         elif self.cur_char:
