@@ -152,9 +152,14 @@ let ABORT = null;
 
 function setStatus(t) { status.setContent(' ' + t); screen.render(); }
 
+// 会话列表项：用图标区分「角色会话」和「直连会话」
+//   直连 ↗   不注入角色卡，也不做后处理
+//   角色 ●   走角色卡 + 规则
 function shortTitle(s) {
-  const t = (s.title || '无标题').replace(/\s+/g, ' ').slice(0, 20);
-  return `${t.padEnd(20)} ${String(s.messageCount || 0).padStart(3)}`;
+  const direct = s.kind === 'direct';
+  const icon = direct ? '\u2197' : '\u25cf';
+  const t = (s.title || '无标题').replace(/\s+/g, ' ').slice(0, 18);
+  return `${icon} ${t.padEnd(18)} ${String(s.messageCount || 0).padStart(3)}`;
 }
 
 async function loadSessions() {
@@ -168,23 +173,33 @@ async function loadSessions() {
 async function openSession(s) {
   S = { ...s };
   const { session } = await api(`/api/sessions/${s.id}`);
+  const direct = session.kind === 'direct';
   const chars = (await api('/api/characters')).characters || [];
   const ch = chars.find((c) => c.id === session.characterId);
   S.characterName = ch?.name || '';
   S.characterId = ch?.id || '';
+  S.direct = direct;
 
-  chat.setLabel(` 对话 · ${S.characterName || ''} `);
+  // 标题里写清是「直连」还是角色名 —— 之前两者看起来一样，分不清
+  const label = direct ? ' 对话 · 直连（无角色卡） ' : ` 对话 · 角色：${S.characterName || '?'} `;
+  chat.setLabel(label);
   chat.setContent('');
   const msgs = (session.messages || []).slice(-40);
-  for (const m of msgs) {
-    const who = m.role === 'user'
-      ? '{green-fg}你{/green-fg}'
-      : `{yellow-fg}${S.characterName || '角色'}{/yellow-fg}`;
-    chat.log(`${who}: ${String(m.content || '').replace(/\n/g, '\n     ')}`);
-  }
+  for (const m of msgs) renderOne(m);
   const think = CFG.thinkOff ? '思考关' : '思考开';
-  setStatus(`${CFG.model || '?'} · ${think} · ${S.title || ''}`);
+  const mode = direct ? '直连' : `角色 ${S.characterName || '?'}`;
+  setStatus(`${CFG.model || '?'} · ${think} · ${mode} · ${S.title || ''}`);
   screen.render();
+}
+
+// 一条消息怎么显示：直连的自己叫「你」，对方叫「模型」；角色模式的叫角色名
+function renderOne(m) {
+  const me = m.role === 'user';
+  let who;
+  if (me) who = '{green-fg}你{/green-fg}';
+  else if (S?.direct) who = '{cyan-fg}模型{/cyan-fg}';
+  else who = `{yellow-fg}${S?.characterName || '角色'}{/yellow-fg}`;
+  chat.log(`${who}: ${String(m.content || '').replace(/\n/g, '\n     ')}`);
 }
 
 // ---------- 流式聊天 ----------
@@ -195,13 +210,16 @@ async function send(text) {
   ABORT = new AbortController();
 
   chat.log(`{green-fg}你{/green-fg}: ${text}`);
-  const prefix = `{yellow-fg}${S.characterName || '角色'}{/yellow-fg}: `;
+  // 直连会话走 /api/direct/chat（不注入角色卡）；角色会话走 /api/chat
+  const endpoint = S.direct ? '/api/direct/chat' : '/api/chat';
+  const prefix = S.direct
+    ? '{cyan-fg}模型{/cyan-fg}: '
+    : `{yellow-fg}${S.characterName || '角色'}{/yellow-fg}: `;
   let acc = '';
-  let started = false;
   setStatus('生成中…');
 
   try {
-    const res = await fetch(BASE + '/api/chat', {
+    const res = await fetch(BASE + endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(COOKIE ? { Cookie: COOKIE } : {}) },
       body: JSON.stringify({ sessionId: S.id, content: text }),
