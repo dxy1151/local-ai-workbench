@@ -162,11 +162,17 @@ function shortTitle(s) {
   return `${icon} ${t.padEnd(18)} ${String(s.messageCount || 0).padStart(3)}`;
 }
 
+// 隐藏空会话（0~1 条消息的壳）：默认隐藏，按 F2 临时显示全部
+let SHOW_EMPTY = false;
+
 async function loadSessions() {
-  SESSIONS = (await api('/api/sessions')).sessions || [];
+  const all = (await api('/api/sessions')).sessions || [];
+  SESSIONS = SHOW_EMPTY ? all : all.filter((s) => (s.messageCount || 0) > 1);
   sessList.setItems(SESSIONS.slice(0, 200).map(shortTitle));
   const i = S ? SESSIONS.findIndex((x) => x.id === S.id) : 0;
   sessList.select(Math.max(0, i));
+  const hidden = all.length - SESSIONS.length;
+  setStatus(`${CFG.model || '?'} · ${SESSIONS.length} 个会话${hidden > 0 ? `（隐藏 ${hidden} 个空会话，F2 显示）` : ''}`);
   screen.render();
 }
 
@@ -319,8 +325,13 @@ screen.key(['C-c'], () => {
   process.exit(0);
 });
 screen.key(['f1'], () => {
-  chat.log('{gray-fg}Tab 切焦点 · 点会话切换 · 滚轮翻记录 · Ctrl+C 中断/退出{/gray-fg}');
+  chat.log('{gray-fg}Tab 切焦点 · 点会话切换 · 滚轮翻记录 · F2 显示/隐藏空会话 · Ctrl+C 中断/退出{/gray-fg}');
   screen.render();
+});
+// F2：临时把空会话（0~1 条消息的壳）也列出来
+screen.key(['f2'], () => {
+  SHOW_EMPTY = !SHOW_EMPTY;
+  loadSessions().catch((e) => setStatus(e.message));
 });
 
 // ---------- 启动 ----------
