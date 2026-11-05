@@ -18,6 +18,17 @@ CHAR_MODEL = 'deepseek-flash'
 USER_MODEL = 'deepseek-v4-pro'
 AUX_MODEL = 'deepseek-flash'
 OUT_DEFAULT = '/mnt/data4t/训练数据（归档）/API生成/dual-v2'
+# v10k+：把 L1 常驻知识塞进角色 system，让生成的回复**自然用上 L1 的说法**
+#（训练数据里没有的说法，模型学不会 —— v7k 就是这个问题）
+L1_PATH = '/home/don0ox1/xingye-sync/knowledge/_wiki-l1.md'
+L1_TEXT = ''
+def load_l1():
+    global L1_TEXT
+    try:
+        L1_TEXT = open(L1_PATH, encoding='utf-8').read().strip()
+    except Exception as e:
+        print('⚠️ L1 读取失败:', e)
+    return L1_TEXT
 # 从环境变量读（仓库是公开的，密钥绝不入库）：export DEEPSEEK_KEYS="sk-xxx,sk-yyy"
 KEYS = [k.strip() for k in os.environ.get('DEEPSEEK_KEYS', '').split(',') if k.strip()]
 if not KEYS:
@@ -140,6 +151,9 @@ def expand_reply(text):
 def run_dialogue(ch, rounds, seed, expand, hist_cap=12):
     rng = random.Random(seed)
     char_sys = ch['system']
+    if L1_TEXT:
+        char_sys = (char_sys + '\n\n【常识参考（写动作和生理反应时可以照着用，'
+                    '不要原文复述、不要念资料）】\n' + L1_TEXT)
     user_sys = user_system(ch['name'], ch.get('tagline') or '', ch.get('scenario') or '', seed)
     turns = []
     char_hist = []   # 角色看到的历史（不含 system）
@@ -240,11 +254,16 @@ def main():
     ap.add_argument('--hist-cap', type=int, default=12, help='每侧保留最近多少条历史（控制费用）')
     ap.add_argument('--out', default=OUT_DEFAULT)
     ap.add_argument('--cost-cap', type=float, default=30.0)
+    ap.add_argument('--with-l1', type=int, default=0,
+                    help='1=角色 system 里带上 L1 常驻知识（生成的回复会用上那些说法）')
     args = ap.parse_args()
     global COST_CAP, LOG
     COST_CAP = args.cost_cap
     os.makedirs(args.out, exist_ok=True)
     LOG = os.path.join(args.out, 'run.log')
+    if args.with_l1:
+        t = load_l1()
+        log(f'注入 L1 常驻知识：{len(t)} 字')
 
     allc = wb('/api/characters')['characters']
     chars = []

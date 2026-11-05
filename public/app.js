@@ -1265,8 +1265,13 @@ async function ollamaAction(action) {
 const THINK_HINT = {
   '/no_think（system）': '走系统提示词 /no_think',
   'think:false（请求体）': '走请求体 think:false',
+  'thinking:disabled（请求体）': '走请求体 thinking:disabled',
   '模型模板参数（本地推理服务）': '由本地推理服务的模板控制',
 };
+// v2.3.18：模型能不能关思考（服务端 /api/config 的 thinkCap）
+function thinkCap() {
+  return state.config?.thinkCap || { canToggle: true, how: '', label: '' };
+}
 
 function thinkState() {
   const off = state.config?.thinkOff === true;
@@ -1277,12 +1282,20 @@ function thinkState() {
 function updateThinkButton() {
   const btn = $('#btn-think');
   if (!btn) return;
+  const cap = thinkCap();
   const { off, hint } = thinkState();
+  // 这个模型关不了思考 → 直接隐藏按钮，别让用户点了没反应
+  if (cap.canToggle === false) {
+    btn.hidden = true;
+    btn.title = cap.label || '这个模型不支持关思考';
+    return;
+  }
+  btn.hidden = false;
   btn.textContent = off ? '🧠' : '💭';
   btn.classList.toggle('is-on', off);
   btn.title = off
     ? `思考：已关（${hint || '按模型自动'}）—— 点一下打开`
-    : '思考：开（回复会先写一大段思考，慢很多）—— 点一下关掉';
+    : `思考：开 —— 点一下关掉（${cap.label || '按模型自动'}）`;
 }
 
 async function toggleThink() {
@@ -2983,7 +2996,7 @@ function updateChatHeader() {
     $('#btn-knowledge').title = '直连模式的资料库（单独一份，不挂在任何角色上）';
     $('#btn-autospeak').hidden = false;
     $('#btn-websearch').hidden = false;   // 🌐 联网搜索：两种模式都能用
-    $('#btn-think').hidden = false;       // 🧠 思考开关：两种模式都能用
+    // 🧠 思考开关：隐藏与否交给 updateThinkButton（按模型能力判断）
     $('#btn-presend').hidden = true;      // 🎲 预选只对角色模式有效
     $('#btn-suggest').hidden = true;      // 🙋 同上
     $('#btn-branch').hidden = false;      // 🌿 其他分支：两种模式都能用
@@ -3035,7 +3048,8 @@ function updateChatHeader() {
   $('#btn-suggest').hidden = false;         // 🙋 该我说什么：帮我起个头
   $('#btn-branch').hidden = false;          // 🌿 其他分支：换掉上一条回复
   updateBranchButton();                     // 开关开着就保持 .is-on 高亮
-  $('#btn-think').hidden = false;           // 🧠 思考开关
+  // 🧠 思考开关：隐藏与否交给 updateThinkButton（按模型能力判断）
+  updateThinkButton();
   $('#btn-direct-phrases').hidden = true;   // 常用语是直连模式的东西；角色用角色卡的「常用词」
   updateAutoSpeakButton();
   updateWebSearchButton();
