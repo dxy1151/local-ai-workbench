@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-"""星野 TUI（textual 版）—— 尽量对齐网页 GUI 的终端界面
+"""星野 TUI（textual）—— 按网页 GUI 的结构重做
 
-为什么换 textual：blessed 是 2015 年的老库，滚动/清空/焦点一堆坑
-（实测：点会话右侧不刷新、回车第二次就死）。textual 是现代框架，
-自带 CSS 布局、鼠标、滚动容器、焦点管理。
+布局对齐网页：
+  ┌─ 角色 | 会话 ──────┬─ 对话 ──────────────────┐
+  │ 小琴（第一次来…）   │ 角色：娟姐（老江湖）     │
+  │ 丽姐（离过婚的）    │ 娟姐: （抬眼）五百。     │
+  │ 小敏（欠了钱的）    │ 你: 包宿怎么算           │
+  │ 阿香（夜市上来）    │ 娟姐: （把算账本抽回来）  │
+  ├────────────────────┴────────────────────────┤
+  │ 输入框（Enter 发送）                          │
+  └──────────────────────────────────────────────┘
 
-布局（和网页一致）：
-  ┌────────────┬──────────────────────────────┐
-  │ 会话列表    │  对话区                       │
-  │ （点击切换） │  （滚轮滚动、流式输出）        │
-  │            │                              │
-  ├────────────┴──────────────────────────────┤
-  │ 输入框（Enter 发送 · 多行用 Shift+Enter）    │
-  └───────────────────────────────────────────┘
+标签页（对应网页左侧那三个）：
+  角色   点一个角色 → 对话区显示开场白，开始新对话
+  会话   点一个已有会话 → 接着聊
+  直连   直连会话（不注入角色卡）
 
-用法：
-  .venv-tui/bin/python tools/tui.py            # 进界面
-  .venv-tui/bin/python tools/tui.py <会话id>    # 直接进
+快捷键：
+  F2 / F3 / F4   切标签页（角色 / 会话 / 直连）
+  Ctrl+N         新会话（用当前角色）
+  Ctrl+R         刷新
+  Ctrl+T         思考开关
+  Ctrl+C         退出
 """
 from __future__ import annotations
 
@@ -29,8 +34,19 @@ import httpx
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    Label,
+    ListItem,
+    ListView,
+    Static,
+    TabbedContent,
+    TabPane,
+)
 
 BASE = os.environ.get("WB_URL", "http://127.0.0.1:5178")
 ENV_FILE = Path.home() / ".config/xingye-tunnel/env"
@@ -49,25 +65,19 @@ def read_password() -> str:
 
 
 class Workbench:
-    """工作台的 HTTP 客户端（同步版，够用）。"""
-
     def __init__(self) -> None:
-        # trust_env=False：不吃 ALL_PROXY 那些环境变量。
-        # 这台机器设了 socks://127.0.0.1:7897，httpx 不认 socks 会直接抛
-        # 「Unknown scheme for proxy URL」。工作台就在本机，本来也不需要代理。
+        # trust_env=False：不吃 ALL_PROXY。这台机器设了 socks://127.0.0.1:7897，
+        # httpx 不认 socks，会直接抛 Unknown scheme。工作台就在本机，也不用代理。
         self.client = httpx.Client(
             base_url=BASE, timeout=300.0, follow_redirects=False, trust_env=False
         )
-        self.logged_in = False
 
     def login(self) -> None:
         pw = read_password()
         if not pw:
             return
         try:
-            r = self.client.post("/", data={"password": pw})
-            # 登录成功会塞 cookie，httpx 自动存
-            self.logged_in = r.status_code in (200, 302)
+            self.client.post("/", data={"password": pw})
         except httpx.HTTPError:
             pass
 
@@ -87,7 +97,6 @@ class Workbench:
         return r.json()
 
     def stream(self, path: str, body: dict):
-        """流式请求，逐块 yield 文本。"""
         with self.client.stream("POST", path, json=body) as r:
             r.raise_for_status()
             for line in r.iter_lines():
@@ -106,20 +115,36 @@ class Workbench:
                     yield ("__error__", d["error"])
 
 
+class CharItem(ListItem):
+    """角色列表项"""
+
+    def __init__(self, ch: dict) -> None:
+        super().__init__()
+        self.ch = ch
+
+    def compose(self) -> ComposeResult:
+        t = Text()
+        t.append("? ", style="cyan")
+        t.append(self.ch.get("name", "?")[:22], style="white")
+        tag = (self.ch.get("tagline") or "").strip()
+        if tag:
+            t.append(f"\n  {tag[:24]}", style="dim")
+        yield Label(t)
+
+
 class SessionItem(ListItem):
+    """会话列表项"""
+
     def __init__(self, sess: dict) -> None:
         super().__init__()
         self.sess = sess
 
     def compose(self) -> ComposeResult:
         direct = self.sess.get("kind") == "direct"
-        icon = "↗" if direct else "●"
-        title = (self.sess.get("title") or "无标题").replace("\n", " ")[:20]
-        n = self.sess.get("messageCount", 0)
         t = Text()
-        t.append(f"{icon} ", style="cyan" if direct else "green")
-        t.append(title, style="white")
-        t.append(f"  {n}", style="dim")
+        t.append("↗ " if direct else "● ", style="cyan" if direct else "green")
+        t.append((self.sess.get("title") or "无标题").replace("\n", " ")[:22], style="white")
+        t.append(f"\n  {self.sess.get('messageCount', 0)} 条", style="dim")
         yield Label(t)
 
 
@@ -127,75 +152,87 @@ class XingyeTUI(App):
     CSS = """
     Screen { layout: vertical; }
     #body { height: 1fr; }
+
+    /* 左侧：角色 / 会话 / 直连 三个标签（对应网页左侧那几个） */
     #left {
-        width: 30;
-        border: round $success;
+        width: 32;
+        border: round $success 60%;
         border-title-color: $success;
     }
-    #chat-wrap {
-        width: 1fr;
-        border: round $accent;
-        border-title-color: $accent;
-    }
-    #chat-scroll { height: 1fr; }
-    #input {
-        dock: bottom;
-        height: 3;
-        border: round $warning 50%;
-        border-title-color: $warning;
-    }
-    #status-bar {
-        dock: bottom;
-        height: 1;
-        background: $panel;
-        color: $text-muted;
+    #left TabbedContent { height: 1fr; }
+    #left ListView { height: 1fr; }
+    CharItem, SessionItem { padding: 0 1; height: auto; }
+    CharItem.--highlight, SessionItem.--highlight { background: $accent 35%; }
+
+    /* 右侧：对话区 */
+    #right { width: 1fr; border: round $accent 60%; border-title-color: $accent; }
+    #chat-wrap { height: 1fr; }
+    #chat { padding: 0 1; }
+    #chat-empty { padding: 2 2; color: $text-muted; }
+    #greeting-tip {
         padding: 0 1;
+        color: $text-muted;
+        background: $panel;
     }
-    SessionItem { padding: 0 1; }
-    SessionItem.--highlight { background: $accent 30%; }
-    .msg-user { color: $success; }
-    .msg-role { color: $warning; }
-    .msg-meta { color: $text-muted; }
+
+    /* 底部 */
+    #input { dock: bottom; height: 3; border: round $warning 50%; }
+    #status-bar { dock: bottom; height: 1; background: $panel; color: $text-muted; padding: 0 1; }
     """
 
     BINDINGS = [
+        ("f2", "tab('tab-chars')", "角色"),
+        ("f3", "tab('tab-sessions')", "会话"),
+        ("f4", "tab('tab-direct')", "直连"),
+        ("ctrl+n", "new_session", "新会话"),
+        ("ctrl+r", "reload", "刷新"),
+        ("ctrl+t", "toggle_think", "思考"),
         ("ctrl+c", "quit", "退出"),
-        ("ctrl+r", "reload", "刷新列表"),
-        ("ctrl+t", "toggle_think", "思考开关"),
-        ("f1", "help", "帮助"),
     ]
 
     def __init__(self, initial_session: str | None = None) -> None:
         super().__init__()
         self.wb = Workbench()
         self.cfg: dict = {}
-        self.sessions: list[dict] = []
-        self.cur: dict | None = None
+        self.chars: list[dict] = []
+        self.sessions: list[dict] = []       # 角色会话
+        self.directs: list[dict] = []        # 直连会话
+        self.cur: dict | None = None         # 当前会话（None = 还没开始）
+        self.cur_char: dict | None = None    # 当前选中的角色
+        self.chat_text: Text = Text()
         self.streaming = False
         self.initial_session = initial_session
-        # 自己维护聊天区的 Text 全文 —— 不去读 Static 的内部渲染值
-        self.chat_text: Text = Text()
 
-    # ---------- 界面 ----------
+    # ---------- 布局 ----------
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="body"):
-            with VerticalScroll(id="left"):
-                yield ListView(id="sessions")
-            with VerticalScroll(id="chat-wrap"):
-                yield Static("", id="chat-scroll")
+            with Vertical(id="left"):
+                with TabbedContent(initial="tab-chars"):
+                    with TabPane("角色", id="tab-chars"):
+                        yield ListView(id="char-list")
+                    with TabPane("会话", id="tab-sessions"):
+                        yield ListView(id="session-list")
+                    with TabPane("直连", id="tab-direct"):
+                        yield ListView(id="direct-list")
+            with Vertical(id="right"):
+                with VerticalScroll(id="chat-wrap"):
+                    yield Static("", id="chat")
+                yield Static("", id="greeting-tip")
         yield Static("", id="status-bar")
-        yield Input(placeholder="说点什么…（Enter 发送）", id="input")
+        yield Input(placeholder="说点什么…（Enter 发送 · Ctrl+N 新会话）", id="input")
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "星野 TUI"
+        self.sub_title = "本地 AI 对话工作台"
         self.wb.login()
         self.load_cfg()
+        self.load_chars()
         self.load_sessions()
         self.query_one("#input", Input).focus()
 
-    # ---------- 数据 ----------
+    # ---------- 载入 ----------
     @work(thread=True)
     def load_cfg(self) -> None:
         try:
@@ -210,6 +247,22 @@ class XingyeTUI(App):
         self.update_status()
 
     @work(thread=True)
+    def load_chars(self) -> None:
+        try:
+            chars = self.wb.get("/api/characters").get("characters") or []
+        except Exception as e:  # noqa: BLE001
+            self.call_from_thread(self.set_status, f"读角色失败：{e}")
+            return
+        self.call_from_thread(self._apply_chars, chars)
+
+    def _apply_chars(self, chars: list[dict]) -> None:
+        self.chars = chars
+        lv = self.query_one("#char-list", ListView)
+        lv.clear()
+        for c in chars:
+            lv.append(CharItem(c))
+
+    @work(thread=True)
     def load_sessions(self) -> None:
         try:
             data = self.wb.get("/api/sessions")
@@ -218,74 +271,116 @@ class XingyeTUI(App):
             return
         self.call_from_thread(self._apply_sessions, data.get("sessions") or [])
 
-    def _apply_sessions(self, sessions: list[dict]) -> None:
-        # 隐藏 0~1 条的空壳会话
-        self.sessions = [s for s in sessions if (s.get("messageCount") or 0) > 1]
-        lv = self.query_one("#sessions", ListView)
-        lv.clear()
-        for s in self.sessions:
-            lv.append(SessionItem(s))
+    def _apply_sessions(self, all_sessions: list[dict]) -> None:
+        # 隐藏 0~1 条的空壳
+        useful = [s for s in all_sessions if (s.get("messageCount") or 0) > 1]
+        self.sessions = [s for s in useful if s.get("kind") != "direct"]
+        self.directs = [s for s in useful if s.get("kind") == "direct"]
 
-        target = None
+        sl = self.query_one("#session-list", ListView)
+        sl.clear()
+        for s in self.sessions:
+            sl.append(SessionItem(s))
+
+        dl = self.query_one("#direct-list", ListView)
+        dl.clear()
+        for s in self.directs:
+            dl.append(SessionItem(s))
+
+        # 有指定会话就直接打开
         if self.initial_session:
-            target = next(
-                (s for s in self.sessions if s["id"].startswith(self.initial_session)),
+            hit = next(
+                (s for s in self.sessions + self.directs if s["id"].startswith(self.initial_session)),
                 None,
             )
-        if target is None and self.sessions:
-            target = self.sessions[0]
-        if target:
-            lv.index = self.sessions.index(target)
-            self.select_session(target)
+            if hit:
+                self.open_session(hit)
         self.update_status()
 
+    # ---------- 选角色 ----------
+    @on(ListView.Selected, "#char-list")
+    def on_pick_char(self, event: ListView.Selected) -> None:
+        item = event.item
+        if not isinstance(item, CharItem):
+            return
+        self.cur_char = item.ch
+        self.cur = None          # 还没开会话
+        name = item.ch.get("name", "?")
+        self.query_one("#right").border_title = f"对话 · 角色：{name}"
+        # 网页也是先给个空状态 + 开场白预览，等你说话才建会话
+        greeting = (item.ch.get("greeting") or "").strip()
+        self.chat_text = Text()
+        if greeting:
+            self.chat_text.append(f"{name}: ", style="bold yellow")
+            self.chat_text.append(greeting)
+            self.chat_text.append("\n")
+        self.query_one("#chat", Static).update(self.chat_text)
+        tip = "这是 TA 的开场白（还没开始记录）—— 说点什么，对话就开始了"
+        self.query_one("#greeting-tip", Static).update(Text(tip, style="dim"))
+        self.set_status(f"已选角色「{name}」· 说句话就开新会话")
+        self.query_one("#input", Input).focus()
+
+    # ---------- 选会话 ----------
+    @on(ListView.Selected, "#session-list")
+    def on_pick_session(self, event: ListView.Selected) -> None:
+        if isinstance(event.item, SessionItem):
+            self.open_session(event.item.sess)
+
+    @on(ListView.Selected, "#direct-list")
+    def on_pick_direct(self, event: ListView.Selected) -> None:
+        if isinstance(event.item, SessionItem):
+            self.open_session(event.item.sess)
+
     @work(thread=True)
-    def select_session(self, sess: dict) -> None:
+    def open_session(self, sess: dict) -> None:
         try:
             full = self.wb.get(f"/api/sessions/{sess['id']}").get("session")
         except Exception as e:  # noqa: BLE001
             self.call_from_thread(self.set_status, f"打开失败：{e}")
             return
-        try:
-            chars = self.wb.get("/api/characters").get("characters") or []
-        except Exception:  # noqa: BLE001
-            chars = []
-        ch = next((c for c in chars if c["id"] == full.get("characterId")), None)
+        ch = None
+        if full.get("characterId"):
+            try:
+                chars = self.wb.get("/api/characters").get("characters") or []
+                ch = next((c for c in chars if c["id"] == full["characterId"]), None)
+            except Exception:  # noqa: BLE001
+                ch = None
         self.call_from_thread(self._render_session, sess, full, ch)
 
     def _render_session(self, sess: dict, full: dict, ch: dict | None) -> None:
-        self.cur = {
-            **sess,
-            "direct": full.get("kind") == "direct",
-            "characterName": (ch or {}).get("name", ""),
-            "characterId": (ch or {}).get("id", ""),
-            "title": full.get("title") or sess.get("title"),
-        }
-        box = self.query_one("#chat-wrap")
-        direct = self.cur["direct"]
-        box.border_title = "对话 · 直连（不注入角色卡）" if direct else f"对话 · 角色：{self.cur['characterName'] or '?'}"
+        direct = full.get("kind") == "direct"
+        self.cur = {**sess, "direct": direct, "title": full.get("title") or sess.get("title")}
+        self.cur_char = ch if not direct else None
+        name = (ch or {}).get("name", "")
+        title = "对话 · 直连（不注入角色卡）" if direct else f"对话 · 角色：{name}"
+        self.query_one("#right").border_title = title
 
-        msgs = full.get("messages") or []
         self.chat_text = Text()
+        msgs = full.get("messages") or []
         if not msgs:
             self.chat_text.append("（还没有消息，在下面输入框说话）", style="dim")
-        for i, m in enumerate(msgs[-60:]):
+        for i, m in enumerate(msgs[-80:]):
             if i:
                 self.chat_text.append("\n")
-            self.chat_text.append_text(self.format_msg(m))
-        self.query_one("#chat-scroll", Static).update(self.chat_text)
+            self.chat_text.append_text(self.fmt(m, direct, name))
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.query_one("#greeting-tip", Static).update("")
+        self.scroll_chat_end()
         self.update_status()
+        self.query_one("#input", Input).focus()
 
-    def format_msg(self, m: dict) -> Text:
+    def fmt(self, m: dict, direct: bool | None = None, name: str | None = None) -> Text:
+        if direct is None:
+            direct = bool((self.cur or {}).get("direct"))
+        if name is None:
+            name = (self.cur_char or {}).get("name", "")
         t = Text()
-        who = m.get("role") == "user"
-        if who:
+        if m.get("role") == "user":
             t.append("你: ", style="bold green")
-        elif self.cur and self.cur["direct"]:
+        elif direct:
             t.append("模型: ", style="bold cyan")
         else:
-            name = (self.cur or {}).get("characterName") or "角色"
-            t.append(f"{name}: ", style="bold yellow")
+            t.append(f"{name or '角色'}: ", style="bold yellow")
         t.append(str(m.get("content") or ""))
         return t
 
@@ -296,75 +391,156 @@ class XingyeTUI(App):
         event.input.value = ""
         if not text:
             return
-        if not self.cur:
-            self.set_status("先选个会话")
-            return
         if self.streaming:
             self.set_status("正在生成，等它说完")
             return
+        # 没有会话 → 用当前角色开一个（网页也是这样：说第一句才建会话）
+        if not self.cur:
+            if not self.cur_char:
+                self.set_status("先在左边选个角色，或者选一个会话")
+                return
+            self.start_new_and_send(text)
+            return
         self.streaming = True
-        self.append_text(self.format_msg({"role": "user", "content": text}))
+        self.append_msg(self.fmt({"role": "user", "content": text}))
         self.set_status("生成中…")
-        self.do_chat(text)
+        self.do_chat(self.cur, text)
+
+    @work(thread=True)
+    def start_new_and_send(self, text: str) -> None:
+        ch = self.cur_char or {}
+        try:
+            r = self.wb.post("/api/sessions", {"characterId": ch["id"]})
+        except Exception as e:  # noqa: BLE001
+            self.call_from_thread(self.set_status, f"新建会话失败：{e}")
+            return
+        s = r.get("session") or r
+        sess = {"id": s.get("id"), "title": s.get("title"), **s}
+        full = self.wb.get(f"/api/sessions/{sess['id']}").get("session")
+        self.call_from_thread(self._after_new, sess, full, text)
+
+    def _after_new(self, sess: dict, full: dict, text: str) -> None:
+        self._render_session(sess, full, self.cur_char)
+        self.load_sessions()
+        if self.cur:
+            self.streaming = True
+            self.append_msg(self.fmt({"role": "user", "content": text}))
+            self.set_status("生成中…")
+            self.do_chat(self.cur, text)
 
     @work(thread=True, exclusive=True)
-    def do_chat(self, text: str) -> None:
-        cur = self.cur or {}
+    def do_chat(self, cur: dict, text: str) -> None:
         path = "/api/direct/chat" if cur.get("direct") else "/api/chat"
-        acc = ""
-        chunks: list[str] = []
+        # 先把「角色: 」这个前缀画出来，后面的增量往里追加
+        name = "模型" if cur.get("direct") else (self.cur_char or {}).get("name") or "角色"
+        style = "bold cyan" if cur.get("direct") else "bold yellow"
+        prefix = Text(f"{name}: ", style=style)
+        self._stream_prefix_text = prefix.plain
+        self.call_from_thread(self.begin_stream, prefix)
+        buf: list[str] = []
         try:
             for piece in self.wb.stream(path, {"sessionId": cur["id"], "content": text}):
                 if isinstance(piece, tuple):
                     tag, val = piece
                     if tag == "__replace__":
-                        acc = val
-                    elif tag == "__error__":
-                        self.call_from_thread(self.append_text, Text(f"✗ {val}", style="bold red"))
+                        # 服务端做了清理/复读截断，正文要以它给的为准。
+                        # 之前这里是 continue（丢掉），结果界面上还显示着
+                        # 复读的原文，看着像「没治住复读」。
+                        self.call_from_thread(self.replace_stream, val)
+                        continue
+                    if tag == "__error__":
+                        self.call_from_thread(self.append_msg, Text(f"✗ {val}", style="bold red"))
                     continue
-                acc += piece
-                chunks.append(piece)
-                # 每攒够一点就推一次，避免每个字都刷新
-                if len(chunks) >= 4:
-                    joined = "".join(chunks)
-                    chunks.clear()
-                    self.call_from_thread(self.append_stream, joined)
-            if chunks:
-                self.call_from_thread(self.append_stream, "".join(chunks))
-            self.call_from_thread(self.finish_stream)
+                buf.append(piece)
+                if len(buf) >= 4:
+                    self.call_from_thread(self.append_stream, "".join(buf))
+                    buf.clear()
+            if buf:
+                self.call_from_thread(self.append_stream, "".join(buf))
         except Exception as e:  # noqa: BLE001
-            self.call_from_thread(self.append_text, Text(f"✗ {e}", style="bold red"))
+            self.call_from_thread(self.append_msg, Text(f"✗ {e}", style="bold red"))
+        finally:
             self.call_from_thread(self.finish_stream)
+
+    def begin_stream(self, prefix: Text) -> None:
+        """开始一条流式回复：记下起点长度，方便服务端 replace 时回退重画。"""
+        if len(self.chat_text):
+            self.chat_text.append("\n")
+        self._stream_start = len(self.chat_text)
+        self.chat_text.append_text(prefix)
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.scroll_chat_end()
+
+    def replace_stream(self, full: str) -> None:
+        """服务端清理/截断之后的正文：把这一条换成它。"""
+        start = getattr(self, "_stream_start", None)
+        if start is None:
+            return
+        # 只保留到流式起点，再写完整正文
+        t = self.chat_text
+        t.truncate(start)
+        self.chat_text = t
+        self.chat_text.append(self._stream_prefix_text + full)
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.scroll_chat_end()
 
     def append_stream(self, text: str) -> None:
         self.chat_text.append(text)
-        self.query_one("#chat-scroll", Static).update(self.chat_text)
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.scroll_chat_end()
 
     def finish_stream(self) -> None:
         self.streaming = False
         self.chat_text.append("\n")
-        self.query_one("#chat-scroll", Static).update(self.chat_text)
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.scroll_chat_end()
         self.update_status()
+        self.load_sessions()
         self.query_one("#input", Input).focus()
 
-    def append_text(self, t: Text) -> None:
+    def append_msg(self, t: Text) -> None:
         if len(self.chat_text):
             self.chat_text.append("\n")
         self.chat_text.append_text(t)
-        static = self.query_one("#chat-scroll", Static)
-        static.update(self.chat_text)
-        static.scroll_end(animate=False)
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.scroll_chat_end()
 
-    # ---------- 事件 ----------
-    @on(ListView.Selected, "#sessions")
-    def on_pick(self, event: ListView.Selected) -> None:
-        item = event.item
-        if isinstance(item, SessionItem):
-            self.select_session(item.sess)
+    def scroll_chat_end(self) -> None:
+        try:
+            self.query_one("#chat-wrap", VerticalScroll).scroll_end(animate=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ---------- 动作 ----------
+    def action_tab(self, tab_id: str) -> None:
+        try:
+            self.query_one(TabbedContent).active = tab_id
+        except Exception:  # noqa: BLE001
+            pass
+
+    def action_new_session(self) -> None:
+        if not self.cur_char:
+            self.set_status("先在「角色」标签里选一个角色")
+            return
+        self.cur = None
+        greeting = (self.cur_char.get("greeting") or "").strip()
+        name = self.cur_char.get("name", "?")
+        self.chat_text = Text()
+        if greeting:
+            self.chat_text.append(f"{name}: ", style="bold yellow")
+            self.chat_text.append(greeting)
+            self.chat_text.append("\n")
+        self.query_one("#chat", Static).update(self.chat_text)
+        self.query_one("#greeting-tip", Static).update(
+            Text("说点什么，就开一段新对话", style="dim")
+        )
+        self.set_status(f"准备用「{name}」开新会话")
+        self.query_one("#input", Input).focus()
 
     def action_reload(self) -> None:
+        self.load_chars()
         self.load_sessions()
-        self.set_status("已刷新会话列表")
+        self.set_status("已刷新")
 
     def action_toggle_think(self) -> None:
         if not self.cfg:
@@ -378,9 +554,6 @@ class XingyeTUI(App):
             return
         self.update_status()
 
-    def action_help(self) -> None:
-        self.set_status("Tab 切焦点 · 点会话切换 · Ctrl+R 刷新 · Ctrl+T 思考开关 · Ctrl+C 退出")
-
     # ---------- 状态栏 ----------
     def set_status(self, msg: str) -> None:
         self.query_one("#status-bar", Static).update(Text(msg, style="dim"))
@@ -389,12 +562,15 @@ class XingyeTUI(App):
         if not self.cfg:
             return
         think = "思考关" if self.cfg.get("thinkOff") else "思考开"
-        mode = ""
         if self.cur:
-            mode = "直连" if self.cur.get("direct") else f"角色 {self.cur.get('characterName') or '?'}"
+            mode = "直连" if self.cur.get("direct") else f"角色 {(self.cur_char or {}).get('name', '?')}"
+        elif self.cur_char:
+            mode = f"待开新会话 · {(self.cur_char.get('name') or '?')}"
+        else:
+            mode = "未选"
         self.set_status(
             f"{self.cfg.get('model', '?')} · {think} · {mode} · "
-            f"{len(self.sessions)} 个会话 · Ctrl+T 思考 · Ctrl+R 刷新"
+            f"角色 {len(self.chars)} · 会话 {len(self.sessions)} · F2/F3/F4 切标签"
         )
 
 
