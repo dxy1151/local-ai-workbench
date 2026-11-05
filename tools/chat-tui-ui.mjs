@@ -139,7 +139,9 @@ const input = blessed.textbox({
     label: { fg: '#cc9', bold: true },
     focus: { border: { fg: '#cba' } },
   },
-  inputOnFocus: true,
+  // ⚠ 不用 inputOnFocus：它只在 focus 那一刻读一次输入，submit 之后就停了。
+  //   改成自己维护读输入循环（见 focusInput），这样连发多少句都正常。
+  inputOnFocus: false,
   keys: true, mouse: true,
 });
 
@@ -298,7 +300,7 @@ async function send(text) {
     STREAMING = false;
     ABORT = null;
     setStatus(`${CFG.model || '?'} · 就绪`);
-    input.focus();
+    focusInput();
     screen.render();
   }
 }
@@ -324,7 +326,7 @@ function cycleFocus() {
   const cur = screen.focused;
   if (cur === input) { sessList.focus(); setStatus('焦点：会话列表（↑↓ 选，Enter 打开）'); }
   else if (cur === sessList) { chat.focus(); setStatus('焦点：聊天区（↑↓ 滚动）'); }
-  else { input.focus(); setStatus('焦点：输入框'); }
+  else { focusInput(); setStatus("焦点：输入框"); }
   screen.render();
 }
 
@@ -334,7 +336,7 @@ sessList.on('select', async (item, idx) => {
   if (!s) { setStatus(`选择无效：idx=${idx}，列表 ${SESSIONS.length} 个`); return; }
   try {
     await openSession(s);
-    input.focus();
+    focusInput();
     screen.render();
   } catch (e) {
     setStatus('打开失败：' + e.message);
@@ -347,11 +349,33 @@ sessList.on('click', (_item, idx) => {
   if (s && (!S || s.id !== S.id)) openSession(s).catch((e) => setStatus(e.message));
 });
 
-input.on('submit', async (val) => {
+// 处理输入框里敲的一行。
+async function submitLine(val) {
   const t = String(val || '').trim();
   input.clearValue();
-  if (!t) { input.focus(); screen.render(); return; }
+  if (!t) { focusInput(); screen.render(); return; }
   await send(t);
+}
+
+input.on('submit', submitLine);
+
+// ⚠ blessed 的 textbox 在 inputOnFocus 下不会一直读输入：
+//   它只在 focus() 时 readInput 一次，submit 后就停了 —— 结果就是
+//   「第一句能发，之后回车/空格都没反应」。
+//   这里自己维持一个读输入循环：submit 完立刻再 readInput 一次。
+function focusInput() {
+  input.focus();
+  // 重新开一次读输入。blessed 的 textbox 在 submit 之后不会自动再读，
+  // 所以每轮都得补这一次 —— 否则第二次回车就没反应了。
+  if (typeof input.readInput === 'function') {
+    try { input.readInput(); } catch { /* 已经在读了 */ }
+  }
+}
+input.on('submit', () => {
+  // 这一句在下面的 readInput 循环里会被再触发一次，所以放在队列后面重新开读
+  setTimeout(() => {
+    if (!STREAMING) focusInput();
+  }, 0);
 });
 
 input.key(['escape'], () => { input.clearValue(); screen.render(); });
@@ -383,7 +407,7 @@ async function main() {
   if (!target) target = SESSIONS[0];
   if (target) await openSession(target);
 
-  input.focus();
+  focusInput();
   screen.render();
   setStatus(`${CFG.model || '?'} · Tab 切焦点 · 鼠标点会话 · Ctrl+C 退出`);
 }
