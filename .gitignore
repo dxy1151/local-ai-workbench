@@ -10,3 +10,4 @@ data-dir.txt
 # 本地临时备份文件
 *.bak-*
 *.bak
+.venv-tui/
