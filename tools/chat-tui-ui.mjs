@@ -176,25 +176,58 @@ async function loadSessions() {
   screen.render();
 }
 
+// 清空聊天区并重画。
+// ⚠ 不能只用 chat.setContent('')：blessed 的 log 组件有内部行缓冲（_clines），
+//   清 content 之后接着 log() 出来的行不会立即显示（实测表现就是「点会话没反应」）。
+//   正确做法是把整个 child 清掉再 log。
+function clearChat() {
+  try {
+    chat.setContent('');
+    if (typeof chat.setScroll === 'function') chat.setScroll(0);
+    // blessed log 的内部行缓存也要清，否则 pushLine 会往旧缓冲里加
+    if (chat._clines) {
+      chat._clines.fake = [];
+      chat._clines.real = [];
+    }
+  } catch { /* 老版本没有这些字段就跳过 */ }
+}
+
 async function openSession(s) {
   S = { ...s };
-  const { session } = await api(`/api/sessions/${s.id}`);
-  const direct = session.kind === 'direct';
-  const chars = (await api('/api/characters')).characters || [];
-  const ch = chars.find((c) => c.id === session.characterId);
-  S.characterName = ch?.name || '';
-  S.characterId = ch?.id || '';
-  S.direct = direct;
+  let session;
+  try {
+    session = (await api(`/api/sessions/${s.id}`)).session;
+  } catch (e) {
+    setStatus('读会话失败：' + e.message);
+    return;
+  }
+  if (!session) { setStatus('会话不存在'); return; }
 
-  // 标题里写清是「直连」还是角色名 —— 之前两者看起来一样，分不清
+  const direct = session.kind === 'direct';
+  S.direct = direct;
+  S.title = session.title || s.title;
+  try {
+    const chars = (await api('/api/characters')).characters || [];
+    const ch = chars.find((c) => c.id === session.characterId);
+    S.characterName = ch?.name || '';
+    S.characterId = ch?.id || '';
+  } catch { S.characterName = ''; }
+
   const label = direct ? ' 对话 · 直连（无角色卡） ' : ` 对话 · 角色：${S.characterName || '?'} `;
   chat.setLabel(label);
-  chat.setContent('');
+  clearChat();
+
   const msgs = (session.messages || []).slice(-40);
-  for (const m of msgs) renderOne(m);
+  if (!msgs.length) {
+    chat.log('{gray-fg}（这个会话还没有消息，在下面输入框里说话）{/gray-fg}');
+  } else {
+    for (const m of msgs) renderOne(m);
+  }
+
   const think = CFG.thinkOff ? '思考关' : '思考开';
   const mode = direct ? '直连' : `角色 ${S.characterName || '?'}`;
-  setStatus(`${CFG.model || '?'} · ${think} · ${mode} · ${S.title || ''}`);
+  setStatus(`${CFG.model || '?'} · ${think} · ${mode} · ${S.title || ''} · ${msgs.length} 条`);
+  chat.setScrollPerc?.(100);
   screen.render();
 }
 
@@ -296,13 +329,16 @@ function cycleFocus() {
 }
 
 // ---------- 事件 ----------
-sessList.on('select', async (_item, idx) => {
+sessList.on('select', async (item, idx) => {
   const s = SESSIONS[idx];
-  if (!s) return;
+  if (!s) { setStatus(`选择无效：idx=${idx}，列表 ${SESSIONS.length} 个`); return; }
   try {
     await openSession(s);
     input.focus();
-  } catch (e) { setStatus('打开失败：' + e.message); }
+    screen.render();
+  } catch (e) {
+    setStatus('打开失败：' + e.message);
+  }
 });
 
 // 鼠标点列表也走 select（blessed 默认点一次选中、点两次触发 select）
