@@ -195,6 +195,7 @@ class XingyeTUI(App):
         self.wb = Workbench()
         self.cfg: dict = {}
         self.chars: list[dict] = []
+        self.all_sessions: list[dict] = []   # 全部角色会话（未按角色过滤）
         self.sessions: list[dict] = []       # 角色会话
         self.directs: list[dict] = []        # 直连会话
         self.cur: dict | None = None         # 当前会话（None = 还没开始）
@@ -274,18 +275,9 @@ class XingyeTUI(App):
     def _apply_sessions(self, all_sessions: list[dict]) -> None:
         # 隐藏 0~1 条的空壳
         useful = [s for s in all_sessions if (s.get("messageCount") or 0) > 1]
-        self.sessions = [s for s in useful if s.get("kind") != "direct"]
+        self.all_sessions = useful
         self.directs = [s for s in useful if s.get("kind") == "direct"]
-
-        sl = self.query_one("#session-list", ListView)
-        sl.clear()
-        for s in self.sessions:
-            sl.append(SessionItem(s))
-
-        dl = self.query_one("#direct-list", ListView)
-        dl.clear()
-        for s in self.directs:
-            dl.append(SessionItem(s))
+        self.refresh_session_list()
 
         # 有指定会话就直接打开
         if self.initial_session:
@@ -296,6 +288,35 @@ class XingyeTUI(App):
             if hit:
                 self.open_session(hit)
         self.update_status()
+
+    def refresh_session_list(self) -> None:
+        """会话列表只显示**当前角色**的会话。
+
+        之前不管选了哪个角色，会话标签里都是全部 72 个会话 ——
+        用户要的是「点角色就能看这个角色的对话」。
+        """
+        cid = (self.cur_char or {}).get("id")
+        if cid:
+            self.sessions = [s for s in self.all_sessions if s.get("characterId") == cid]
+        else:
+            self.sessions = [s for s in self.all_sessions if s.get("kind") != "direct"]
+
+        sl = self.query_one("#session-list", ListView)
+        sl.clear()
+        for s in self.sessions:
+            sl.append(SessionItem(s))
+
+        # 标一下标签页上有几条
+        try:
+            tabs = self.query_one(TabbedContent)
+            if cid:
+                nm = (self.cur_char or {}).get("name", "")
+                tabs.get_tab("tab-sessions").label = f"会话·{nm[:6]}({len(self.sessions)})"
+            else:
+                tabs.get_tab("tab-sessions").label = f"会话({len(self.sessions)})"
+            tabs.get_tab("tab-direct").label = f"直连({len(self.directs)})"
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------- 选角色 ----------
     @on(ListView.Selected, "#char-list")
@@ -317,7 +338,8 @@ class XingyeTUI(App):
         self.query_one("#chat", Static).update(self.chat_text)
         tip = "这是 TA 的开场白（还没开始记录）—— 说点什么，对话就开始了"
         self.query_one("#greeting-tip", Static).update(Text(tip, style="dim"))
-        self.set_status(f"已选角色「{name}」· 说句话就开新会话")
+        self.refresh_session_list()   # 会话标签页只留这个角色的
+        self.set_status(f"已选角色「{name}」· 说句话就开新会话 · F3 看 TA 的会话")
         self.query_one("#input", Input).focus()
 
     # ---------- 选会话 ----------
@@ -568,9 +590,11 @@ class XingyeTUI(App):
             mode = f"待开新会话 · {(self.cur_char.get('name') or '?')}"
         else:
             mode = "未选"
+        cid = (self.cur_char or {}).get("id")
+        scope = f"本角色 {len(self.sessions)} 个会话" if cid else f"全部 {len(self.sessions)} 个会话"
         self.set_status(
             f"{self.cfg.get('model', '?')} · {think} · {mode} · "
-            f"角色 {len(self.chars)} · 会话 {len(self.sessions)} · F2/F3/F4 切标签"
+            f"角色 {len(self.chars)} · {scope} · F2/F3/F4 切标签"
         )
 
 
