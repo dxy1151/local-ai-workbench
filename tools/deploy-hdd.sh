@@ -12,8 +12,14 @@ DEPLOY="${WORKBENCH_DEPLOY_DIR:-/mnt/data4t/xingye-chat-portable}"
 
 [ -f "$DEPLOY/start.js" ] || { echo "❌ 部署目录不可用（机械盘 /mnt/data500 没挂？）：$DEPLOY"; exit 1; }
 
+# ⚠ 必须排除的东西：
+#   .venv-tui / node_modules  —— 部署目录里的运行时依赖，开发目录没有或不完整，
+#                                不排除的话 --delete 会把它们删掉（TUI 直接跑不了）
+#   .git                     —— 部署目录要自己维护 git（以后就在那改）
+#   data/ data-dir.txt       —— 数据在 xingye-sync，别覆盖
 rsync -a --delete \
-  --exclude='.git' --exclude='data/' --exclude='data-dir.txt' --exclude='server.log' \
+  --exclude='.git' --exclude='.venv-tui' --exclude='node_modules' \
+  --exclude='data/' --exclude='data-dir.txt' --exclude='server.log' \
   --exclude='*.bak-*' --exclude='.tts-cache' \
   "$DEV/" "$DEPLOY/"
 
