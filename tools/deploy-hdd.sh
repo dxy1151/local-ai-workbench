@@ -7,10 +7,20 @@
 #
 # 数据不动：部署目录的 data-dir.txt 指向 /home/don0ox1/xingye-sync（实时数据）。
 set -euo pipefail
-DEV="${WORKBENCH_DEV_DIR:-$HOME/xingye-chat}"
+DEV="${WORKBENCH_DEV_DIR:-}"
 DEPLOY="${WORKBENCH_DEPLOY_DIR:-/mnt/data4t/xingye-chat-portable}"
 
-[ -f "$DEPLOY/start.js" ] || { echo "❌ 部署目录不可用（机械盘 /mnt/data500 没挂？）：$DEPLOY"; exit 1; }
+[ -f "$DEPLOY/start.js" ] || { echo "❌ 部署目录不可用（机械盘 /mnt/data4t 没挂？）：$DEPLOY"; exit 1; }
+
+# 2026-11-06 起代码只维护在机械盘这一份，没有单独的开发目录了。
+# 所以「部署」就是重启服务；只有显式给了 WORKBENCH_DEV_DIR 才做 rsync。
+if [ -z "$DEV" ]; then
+  systemctl --user restart xingye-chat
+  sleep 2
+  V=$(curl -s http://127.0.0.1:5178/api/config | python3 -c "import sys,json;print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+  echo "✅ 已重启服务（代码就在 $DEPLOY，无需同步）；线上版本：$V"
+  exit 0
+fi
 
 # ⚠ 必须排除的东西：
 #   .venv-tui / node_modules  —— 部署目录里的运行时依赖，开发目录没有或不完整，
