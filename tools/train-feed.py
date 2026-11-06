@@ -220,7 +220,7 @@ def write_once(out: str, base_url: str) -> int:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--out', default='/home/don0ox1/xingye-chat/public/train.xml')
+    ap.add_argument('--out', default='/mnt/data4t/xingye-chat-portable/public/train.xml')
     ap.add_argument('--base-url', default='http://127.0.0.1:5178/train.xml')
     ap.add_argument('--watch', action='store_true')
     ap.add_argument('--interval', type=int, default=300)
