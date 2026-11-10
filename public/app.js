@@ -563,6 +563,7 @@ function fillSettingsForm() {
   form.contextWindow.value = config.contextWindow || '';
   form.autoClean.checked = config.autoClean !== false;
   if (form.qualityGate) form.qualityGate.checked = config.qualityGate !== false;
+  if (form.compactSystem) form.compactSystem.checked = config.compactSystem === true;
   form.autoPair.checked = config.autoPair !== false;
   form.forceAction.checked = config.forceAction !== false;
   form.cleanHistory.checked = config.cleanHistory !== false;
@@ -615,6 +616,7 @@ async function submitSettings(e) {
     narrative: form.narrative.value,
     autoClean: form.autoClean.checked,
     qualityGate: form.qualityGate ? form.qualityGate.checked : true,
+    compactSystem: form.compactSystem ? form.compactSystem.checked : false,
     autoPair: form.autoPair.checked,
     forceAction: form.forceAction.checked,
     cleanHistory: form.cleanHistory.checked,

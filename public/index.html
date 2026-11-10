@@ -542,6 +542,17 @@
 
       <label class="check-row">
         <span class="check-line">
+          <input type="checkbox" name="compactSystem">
+          <span>极简 system（给未微调的大模型用）</span>
+        </span>
+        <small>把 system 从 5000+ 字压缩到约 1500 字，只保留「角色是谁 + 怎么说话 + 当前相关知识」。
+        **只在接未微调的基座模型时开**（比如 Qwen3.8-27B）。实测同一模型：452 字 system 输出 361~442 字零重复，
+        5145 字 system 只输出 41~152 字还会复读 —— 基座模型没学过这套规则，长规则对它是噪声。
+        ⚠️ 微调过的模型（v14j 等）不要开，它们训练时见的就是完整 system。</small>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
           <input type="checkbox" name="qualityGate">
           <span>质量门（不合格就重抽）</span>
         </span>
