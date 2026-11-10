@@ -564,6 +564,7 @@ function fillSettingsForm() {
   form.autoClean.checked = config.autoClean !== false;
   if (form.qualityGate) form.qualityGate.checked = config.qualityGate !== false;
   if (form.compactSystem) form.compactSystem.checked = config.compactSystem === true;
+  if (form.systemInUser) form.systemInUser.checked = config.systemInUser === true;
   if (form.repeatPenalty) form.repeatPenalty.value = config.repeatPenalty != null ? config.repeatPenalty : 1.1;
   form.autoPair.checked = config.autoPair !== false;
   form.forceAction.checked = config.forceAction !== false;
@@ -618,6 +619,7 @@ async function submitSettings(e) {
     autoClean: form.autoClean.checked,
     qualityGate: form.qualityGate ? form.qualityGate.checked : true,
     compactSystem: form.compactSystem ? form.compactSystem.checked : false,
+    systemInUser: form.systemInUser ? form.systemInUser.checked : false,
     repeatPenalty: form.repeatPenalty ? Number(form.repeatPenalty.value) : 1.1,
     autoPair: form.autoPair.checked,
     forceAction: form.forceAction.checked,

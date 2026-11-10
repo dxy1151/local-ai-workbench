@@ -553,6 +553,17 @@
 
       <label class="check-row">
         <span class="check-line">
+          <input type="checkbox" name="systemInUser">
+          <span>设定塞进 user 消息（推荐）</span>
+        </span>
+        <small>把整段设定/扮演要求拼到最后一条 user 消息里，而不是当作 system 消息发。
+        实测（6 臂 × 3 塞法 × 432 次生成）：同一模型塞 user 时**最长复读 0**，
+        塞 system 时会**整段复读一遍**（复读长度 24.1，罚分差 16 倍）。小模型对 system 消息处理不稳定。
+        <b>训练时用的哪种塞法，推理就用哪种。</b></small>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
           <input type="checkbox" name="compactSystem">
           <span>极简 system（给未微调的大模型用）</span>
         </span>
