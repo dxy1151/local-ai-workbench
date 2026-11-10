@@ -542,6 +542,15 @@
 
       <label class="check-row">
         <span class="check-line">
+          <input type="checkbox" name="qualityGate">
+          <span>质量门（不合格就重抽）</span>
+        </span>
+        <small>关掉后**只生成一次**，不做任何重抽：太短、空回复、复读、只一个人说话，全都不再重来。
+        测未微调基座模型时建议关掉 —— 实测首版常常是对的，被"太短"判定踢掉后重抽反而整段复读 3 遍。</small>
+      </label>
+
+      <label class="check-row">
+        <span class="check-line">
           <input type="checkbox" name="autoClean">
           <span>自动清掉"凭空造出来的动静"</span>
         </span>

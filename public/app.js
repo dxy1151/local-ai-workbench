@@ -562,6 +562,7 @@ function fillSettingsForm() {
   form.residentKnowledge.value = config.residentKnowledge || '';
   form.contextWindow.value = config.contextWindow || '';
   form.autoClean.checked = config.autoClean !== false;
+  if (form.qualityGate) form.qualityGate.checked = config.qualityGate !== false;
   form.autoPair.checked = config.autoPair !== false;
   form.forceAction.checked = config.forceAction !== false;
   form.cleanHistory.checked = config.cleanHistory !== false;
@@ -613,6 +614,7 @@ async function submitSettings(e) {
     castSpeakChance: Number(form.castSpeakChance.value),
     narrative: form.narrative.value,
     autoClean: form.autoClean.checked,
+    qualityGate: form.qualityGate ? form.qualityGate.checked : true,
     autoPair: form.autoPair.checked,
     forceAction: form.forceAction.checked,
     cleanHistory: form.cleanHistory.checked,
