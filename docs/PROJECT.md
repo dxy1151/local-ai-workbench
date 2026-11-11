@@ -4,7 +4,7 @@
 > 一次聊天请求从浏览器到模型再回来都经过了谁、数据存在哪、接口长什么样、
 > 从哪里插进去最不容易踩坑，以及这个项目已经踩过哪些坑（照着躲）。
 
-- 版本：**v1.7.0**（版本号唯一来源是 `package.json`，见 `lib/version.js`）
+- 版本：**v2.4.1**（版本号唯一来源是 `package.json`，见 `lib/version.js`；改版本号时 CHANGELOG 必须同步加一节）
 - 运行形态：单个 Node.js 进程（Node ≥ 18，ESM，**零 npm 依赖**）+ 浏览器页面
 - 数据形态：本地 JSON 文件，一个对象一个文件（为了 Syncthing 这类文件级同步能干净合并）
 
@@ -75,17 +75,26 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 2. 项目根 `data-dir.txt` 里第一行非注释路径
 3. 默认 `./data`
 
-本机实际指到 `/home/don0ox1/xingye-sync`（`data-dir.txt`），所以程序目录和数据目录是分开的，
+本机实际指到 `/mnt/data4t/xingye-sync`（`data-dir.txt`），所以程序目录和数据目录是分开的，
 升级只换程序、不动数据。
 
-### 远程访问口令（可选）
+### 远程访问口令 / 2FA / 可信网段（可选）
 
-- 环境变量 `WORKBENCH_PASSWORD`（兼容 `XINGYE_PASSWORD`），**不落盘**。
-- 没设 = 不启用认证；设了之后：**回环地址免密**，其它来源要过一次
-  `POST /__login`（`application/x-www-form-urlencoded`，字段 `password`），
-  成功后发 `HttpOnly` Cookie `xingye_pass`（30 天）。`/__logout` 清 Cookie。
-- 实现在 `lib/access.js`，门在 `route()` 的最前面；`/api/*` 未授权回 401 JSON，
-  其它路径回登录页 HTML。
+- 口令来源优先级：`~/.config/xingye-tunnel/auth.json`（v2.3.9 起网页可改，权限 600）
+  > 环境变量 `WORKBENCH_PASSWORD`（兼容 `XINGYE_PASSWORD`）。
+  **注意：v2.4.1 前这里写"不落盘"是错的** —— 网页里改过口令就会写进 auth.json。
+- 没设口令 = 不启用认证；设了之后：
+  - **本机（回环且没有代理转发头）免密**；
+  - **可信网段免密**（v2.3.42）：`XINGYE_TRUST_CIDRS` 或 auth.json 的 `trustCidrs`，
+    例 `192.168.1.0/24,100.64.0.0/10`（覆盖局域网和 Tailscale）；
+  - 带 `cf-connecting-ip` / `x-forwarded-for` / `x-real-ip` / `cf-ray` 的请求**永远不算本机、也不算可信网段**；
+  - 其它来源过一次 `POST /__login`（`application/x-www-form-urlencoded`，字段 `password`、
+    可选 `code`），成功后发 `HttpOnly` Cookie `xingye_pass`（30 天）。`/__logout` 清 Cookie。
+- **2FA（TOTP）**：`WORKBENCH_TOTP_SECRET` 或 auth.json 的 `totpSecret`；开启后 `/__login` 额外校验 `code`。
+- `/api/auth/*`（改口令 / 开关 2FA）**只接受本机请求**（`isLoopback`），远程改锁一律 403。
+- 实现在 `lib/access.js`，门在 `route()` 最前面；`/api/*` 未授权回 401 JSON，其它路径回登录页 HTML。
+- v2.4.1 修复：`/train.xml`、`/train.json` 原来在口令门**之前**放行（注释说要给 RSS 阅读器用），
+  但 `public/` 里从来没有这两个文件 —— 那是死豁免 + 一个"放个同名文件就免鉴权"的口子，已删除。
 
 ---
 
@@ -141,26 +150,26 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 | 文件 | 行数级 | 干什么 | 关键导出 |
 |---|---|---|---|
 | `start.js` | 77 | 入口，参数/环境变量解析，启动横幅与错误提示 | — |
-| `lib/server.js` | 3100+ | 唯一 HTTP 入口：路由、SSE、所有业务流程编排 | `startServer` |
-| `lib/store.js` | 917 | 本地 JSON 存储（角色/会话/配置/资料/素材）+ 所有字段归一化 | `DATA_DIR`、`getConfig/saveConfig`、`listCharacters/saveCharacter/deleteCharacter`、`listSessions/getSession/createSession/saveSession/deleteSession`、`getKnowledge/saveKnowledge`、`getSharedKnowledge/saveSharedKnowledge`、`listScripts/getScript/createScript/saveScript/deleteScript`、`exportBundle/mergeBundle`、`ensureDataReady` |
-| `lib/prompt.js` | 887 | 提示词：角色系统提示词、多人、维度、常用词、提示、备忘、字数、资料、搜索、等义词、`/no_think`、历史裁剪、回复解析 | `buildMessages`、`previewContext`、`directMessages`、`parseCast/castOf`、`parseReplyLines`（可传 cast 名字）、`normalizeCastSpeaker`、`asNudge`、`applyAsIdentity`、`dropAsSpeaker`、`dropMultiOpener`、`CONTEXT_BUDGET` |
-| `lib/sanitize.js` | 850 | 回复质量：清凭空动静、角色泄漏、套路句（`*…*` 和 `（）` 两种记号）、复读、**模型替用户写的动作/心理**；质量打分；历史清洗（含自我复读锁定） | `sanitizeReply`、`stripUserActions`、`stripClicheActions`、`replyQuality`、`cleanHistory` |
+| `lib/server.js` | 4341 | 唯一 HTTP 入口：路由、SSE、所有业务流程编排 | `startServer` |
+| `lib/store.js` | 1156 | 本地 JSON 存储（角色/会话/配置/资料/素材）+ 所有字段归一化 | `DATA_DIR`、`getConfig/saveConfig`、`listCharacters/saveCharacter/deleteCharacter`、`listSessions/getSession/createSession/saveSession/deleteSession`、`getKnowledge/saveKnowledge`、`getSharedKnowledge/saveSharedKnowledge`、`listScripts/getScript/createScript/saveScript/deleteScript`、`exportBundle/mergeBundle`、`ensureDataReady` |
+| `lib/prompt.js` | 1558 | 提示词：角色系统提示词、多人、维度、常用词、提示、备忘、字数、资料、搜索、等义词、`/no_think`、历史裁剪、回复解析 | `buildMessages`、`previewContext`、`directMessages`、`parseCast/castOf`、`parseReplyLines`（可传 cast 名字）、`normalizeCastSpeaker`、`asNudge`、`applyAsIdentity`、`dropAsSpeaker`、`dropMultiOpener`、`CONTEXT_BUDGET` |
+| `lib/sanitize.js` | 1014 | 回复质量：清凭空动静、角色泄漏、套路句（`*…*` 和 `（）` 两种记号）、复读、**模型替用户写的动作/心理**；质量打分；历史清洗（含自我复读锁定） | `sanitizeReply`、`stripUserActions`、`stripClicheActions`、`replyQuality`、`cleanHistory` |
 | `lib/markup.js` | 461 | 记号与人称：`*…*`↔`（…）`、外语残留、第三人称旁白检测与改第一人称 | `normalizeMarkup`、`normalizePerson`、`thirdPersonSubjects` |
-| `lib/openai.js` | 471 | OpenAI 兼容流式客户端；HTTP 代理隧道；prefill；后端串行锁；gemma 角色交替修复 | `streamChat`、`listModels`、`withBackendLock`、`OpenAIError`、`MAX_OUTPUT_TOKENS` |
-| `lib/ollama.js` | 489 | Ollama 原生 API：探活、模型列表、`think`、`keep_alive`、预加载、释放、启动 | `isOllamaBase`、`localOllamaBase`、`listLocalModels`、`streamChatNative`、`thinkControl` |
-| `lib/knowledge.js` | 450 | 资料分块 / 词法检索 / 语义检索 / 向量缓存 / 口语映射 | `chunkText`、`pickChunksSmart`、`knowledgeBlock`、`applyColloquialMap` |
+| `lib/openai.js` | 597 | OpenAI 兼容流式客户端；HTTP 代理隧道；prefill；后端串行锁；gemma 角色交替修复 | `streamChat`、`listModels`、`withBackendLock`、`OpenAIError`、`MAX_OUTPUT_TOKENS` |
+| `lib/ollama.js` | 643 | Ollama 原生 API：探活、模型列表、`think`、`keep_alive`、预加载、释放、启动 | `isOllamaBase`、`localOllamaBase`、`listLocalModels`、`streamChatNative`、`thinkControl` |
+| `lib/knowledge.js` | 634 | 资料分块 / 词法检索 / 语义检索 / 向量缓存 / 口语映射 | `chunkText`、`pickChunksSmart`、`knowledgeBlock`、`applyColloquialMap` |
 | `lib/search.js` | 299 | 必应搜索与结果解析（同代理） | `searchBing`、`cleanQuery` |
 | `lib/vision.js` | 143 | 识图与附图（图片校验、临时切视觉模型） | `describeImage`、`parseImagePayload` |
-| `lib/tts.js` | 92 | 朗读合成 + 缓存 | `synthesize`、`speechText`、`ttsCacheKey` |
+| `lib/tts.js` | 170 | 朗读合成 + 缓存 | `synthesize`、`speechText`、`ttsCacheKey` |
 | `lib/workguard.js` | 92 | 工作时段锁（北京时间 09–12 / 14–18）与本地接口判定 | `workState`、`isLocalEndpoint` |
 | `lib/candidates.js` | 111 | 一次生成 N 个候选（截断自动翻倍重抽、清洗角色标记） | `generateCandidates` |
 | `lib/export.js` | 427 | 导出训练样本：会话 SFT / DPO 偏好对 / 手写素材（含权重） | `exportTrainingSamples`、`exportPreferencePairs`、`exportScriptSamples` |
 | `lib/weights.js` | 92 | 训练样本权重（handwritten 8 / edited 5 / adopted 2 / plain 1，上限 12） | `normalizeWeights`、`applySampleWeights` |
-| `lib/trainer.js` | 1096 | 训练队列：导数据→清洗→spawn python→日志→部署；OOM 重排；重启恢复 | `enqueueTraining`、`enqueueScriptTraining`、`queueState`、`deployTraining` |
+| `lib/trainer.js` | 1147 | 训练队列：导数据→清洗→spawn python→日志→部署；OOM 重排；重启恢复 | `enqueueTraining`、`enqueueScriptTraining`、`queueState`、`deployTraining` |
 | `lib/trainlog.js` | 321 | 训练日志索引、GPU 快照、活动进程 | `listTrainRuns`、`gpuSnapshot` |
-| `lib/gpu.js` | 200 | 显存/进程探测；训练前停 Ollama / llama-server / ComfyUI，训练后恢复 | `prepareGpuForTraining`、`restoreGpu` |
+| `lib/gpu.js` | 436 | 显存/进程探测；训练前停 Ollama / llama-server / ComfyUI，训练后恢复 | `prepareGpuForTraining`、`restoreGpu` |
 | `lib/xingye.js` | 887 | 星野分享链接解析、抓取、注册、搜索（有频率控制） | `extractUrls`、`resolveShare`、`fetchOne`、`registerCharacters` |
-| `lib/access.js` | 105 | 远程访问口令（环境变量 + Cookie） | `isAuthorized`、`loginPage` |
+| `lib/access.js` | 239 | 远程访问口令（环境变量 + Cookie） | `isAuthorized`、`loginPage` |
 | `lib/version.js` | 16 | 版本号唯一来源（读 package.json） | `VERSION` |
 
 ---
@@ -229,7 +238,24 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 - 请求体超过上限（默认 1MB）会抛「请求体过大」→ 500。
 - **同一个请求体只能读一次**（`readBody` 消费流）。外层读过之后，处理器里要复用外层变量，
   不能再读（`/api/script/generate` 就踩过这个坑，代码里有注释）。
-- `GET /api/version` → `{version}`。
+- `GET /api/version` → `{version}`（取自 `package.json`；v2.4.1 前连续 8 个版本忘了改，页脚一直显示旧号）。
+
+### 6.0 安全 / 运维 / 评分（v2.4.1 补：这些以前根本没写进文档）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/auth/status` | 口令/2FA 状态（来源 file/env、是否开启）**仅本机** |
+| POST | `/api/auth/password` | 改口令（两次输入）**仅本机** |
+| POST | `/api/auth/totp/new` | 生成 2FA 密钥 + 二维码矩阵 **仅本机** |
+| POST | `/api/auth/totp/enable` | 校验一次验证码后开启 2FA **仅本机** |
+| POST | `/api/auth/totp/disable` | 关闭 2FA **仅本机** |
+| POST | `/api/data-dir/open` | 在**本机**用 `xdg-open` 打开数据目录（只对本机放开） |
+| GET/POST | `/api/rl/labels` · `/api/rl/label` | 日常强化评分的标签读写 |
+| POST | `/api/gpu/arbitrate` | 手动触发显存调度 |
+| POST | `/api/gpu/restore` | 恢复被临时停掉的显存服务 |
+| POST | `/api/quit` | 退出进程（在口令门之后，不是无鉴权） |
+
+> ⚠ v2.4.1 前 `/train.xml`、`/train.json` 在口令门**之前**放行 —— 那是死豁免（public 里没这两个文件），已删除。
 
 ### 6.1 配置 / 模型 / 上下文
 
@@ -393,7 +419,7 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 │   ├── cards/<npcId>.json      星野完整角色卡
 │   └── avatars/<npcId>.<ext>   头像原图
 ├── .stignore                   应用自动维护：config.json / *.tmp / *.migrated / .embed-cache-*
-└── .train-queue.json           训练队列（在 llm-chat/data 下，不是工作台数据目录，见 §11）
+└── （训练队列 **不在**这里：在 llm-chat/data/.train-queue.json，见 lib/trainer.js:32）
 ```
 
 ### Character（角色卡）
@@ -489,21 +515,30 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 | `memo` | `''` | 场景备忘（≤800 字） |
 | `maxChars` | `0` | 回复字数上限（0=不限，上限 2000） |
 | `autoClean` | `true` | 自动清「凭空动静」 |
-| `forceAction` | `false` | 「动作开头」prefill |
+| `forceAction` | `true` | 「动作开头」prefill |
 | `cleanHistory` | `true` | 发送前清洗历史（只改发出去的，不改存档） |
 | `autoPair` | `true` | 输入框自动补括号 |
-| `maxTries` | `2` | 质量门最多重试次数（1–3） |
-| `knowledgeChars` | `500` | 资料注入上限（0–2000） |
-| `knowledgeSemantic` | `true` | 语义检索；失败自动降级词法 |
+| `maxTries` | `2` | 质量门最多重试次数（1–3）。**v2.4.1 前 getConfig 从不返回它 → 恒为 2** |
+| `knowledgeChars` | `500` | 资料注入上限（0–8000，v2.3.28 从 2000 提上来；单块最多 260 字、topK ≤ 20） |
+| `knowledgeSemantic` | `false` | 语义检索（**v2.3.1 起默认关**，默认走词法）；开了失败自动降级词法 |
 | `knowledgeThreshold` | `0.5` | 相似度阈值（0–0.9） |
 | `knowledgeEmbedModel` | `qwen3-embedding:0.6b` | 本机 Ollama 的 embedding 模型 |
 | `knowledgeMap` | `''` | 口语→术语映射（每行 `词=意思`） |
-| `directPhrases` / `directPhraseLevel` | `''` / `3` | 直连模式唯一会注入的常用语 |
+| `directPhrases` / `directPhraseLevel` | `''` / `4` | 直连模式唯一会注入的常用语 |
 | `directDims` / `directHint` / `directMemo` / `directMaxChars` | — | 直连模式自己的那份 |
 | `tts` | `{}` | `{baseUrl, apiKey, model, voice, speed, format, auto}` |
-| `keepAlive` | `'2m'` | Ollama keep-alive；`-1` = 常驻 |
+| `keepAlive` | `null` | Ollama keep-alive（不干预）；`'2m'` 之类由用户设，`-1` = 常驻 |
 | `visionModel` | `qwen2.5vl:3b` | 识图/附图用的本机视觉模型 |
 | `webSearch` / `webSearchSite` / `webSearchCount` / `webSearchChars` | `false` / `intl` / `5` / `1600` | 联网搜索 |
+| `fullSystem` | `false` | 本地后端也用完整 system（v2.3.33；与 `compactSystem` 互斥） |
+| `compactSystem` | `false` | 极简 system（v2.3.36）；系统提示词压到约 400~1500 字，给未微调基座模型 |
+| `systemInUser` | `false` | 设定塞进最后一条 user 消息（v2.3.40） |
+| `qualityGate` | `true` | 质量门：关掉 = 只生成一次、不重抽（v2.3.35） |
+| `repeatPenalty` | `1.1` | 本地模型重复惩罚（0.9–2；v2.3.37 从写死 1.3 改成可配） |
+| `thinkOff` / `thinkForce` | `false` | 关 / 强制开思考；v2.4.1 起关思考按 `/api/show` 能力探测决定发不发 `think:false` |
+| `l1TopicPick` | `false` | 常驻知识按话题分段注入（**v2.4.1 前从未生效**，配置里根本没这个字段） |
+| `contextWindow` | `0` | 本地 Ollama `num_ctx`（**v2.4.1 前根本没发给 Ollama**） |
+| `reasoningEffort` | `'high'` | `reasoning_effort`，**只对云端生效**；本地后端在 UI 上灰掉 |
 | `savedCloud` | `null` | 从云端切到本地时自动存的云端配置，切回来用 |
 
 > 读配置一律走 `getConfig()`（它会补默认值 + 环境变量回退），**不要直接读文件**。
@@ -546,7 +581,7 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 > 开场白通常是单人一句话（「陈梦：你好…」），留着会把模型锚成"整段只有一个人说话"。
 
 
-`一句话设定` → `castPromptBlock`（人物表 + 7 条多人规则，含「名字：内容」格式）
+`一句话设定` → `castPromptBlock`（人物表 + 10 条多人规则 + 6.1，含「名字：内容」格式；`opts.castPlan` 决定这一轮点名谁开口）
 → `背景场景` → `常用词` → `叙事推进` → `【描写幅度】` → `特点提示词` → `资料库` → `网页搜索`
 → `【字数上限】` → `场景备忘`。
 
@@ -1038,7 +1073,7 @@ data:/file: 正常、http 全超时），需要看 UI 时用「把 `style.css` �
 | 手机打不开 | 只监听了 127.0.0.1 | `node start.js 5178 0.0.0.0`，防火墙放行 |
 | 聊天 401 | 没 API Key 且不是本地地址 | 设置里填 Key，或换本机 Ollama |
 | 回复突然很慢（几十秒）/ 爆显存 | 显卡上同时加载了**多个** 12B（gemma-server:18080、llama-gemma4:8080、Ollama:11434、ComfyUI:8188），16G 装不下 | **v1.4.0 起自动调度**：聊天前重启掉线的 Ollama、停常驻 llama-server、让 ComfyUI `/free` 卸模型（不杀进程）、不够再临时停 ComfyUI 并空闲 2 分钟自动恢复；手写素材走 gemma 时反过来卸 Ollama。可在设置里关掉 / 用 `POST /api/gpu/arbitrate` 手动触发。`lib/gpu.js#arbitrateForChat` |
-| 多人回复只有一个人说话 | 提示词「不要求全员出场」+ 历史里都是单人回复，模型会跟着学 | v1.3.0 起：训练数据改成「每轮两人」，提示词写「默认 2 个人物都开口」，`sanitize.cleanHistory` 还会把复读的整句从发给模型的历史里删掉 |
+| 多人回复只有一个人说话 | 提示词「不要求全员出场」+ 历史里都是单人回复，模型会跟着学 | v1.7.2 起：改为按 `castSpeakChance`（默认 65%）**几率点名**谁开口，不再是「2 个人物都开口」，`sanitize.cleanHistory` 还会把复读的整句从发给模型的历史里删掉 |
 | 回复空 / 47 秒空转 | `/v1` 把 `think` 丢了 | 走 Ollama 原生 `/api/chat`（内置已处理） |
 | `Conversation roles must alternate` | gemma 模板要求交替 | 已自动修复；插件自己发 gemma 时也要做 |
 | `ECONNRESET, accLen:0` | Node keep-alive 复用死连接 | 客户端 `agent:false` |

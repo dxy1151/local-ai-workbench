@@ -26,7 +26,7 @@ import { sanitizeReply, findInventedEvents, describeCleaned, stallScore, describ
 import { chunkText, pickChunks, knowledgeBlock } from './lib/knowledge.js';
 import { speechText, ttsCacheKey } from './lib/tts.js';
 import { normalizeTts, getConfig as storeConfig, normalizeSearchSite, normalizeSearchCount, normalizeSearchChars } from './lib/store.js';
-import { describePreloadFailure, thinkControl } from './lib/ollama.js';
+import { describePreloadFailure, thinkControl, clearOllamaProbe, probeThinkCapability, clearThinkCapCache, isOllamaBase } from './lib/ollama.js';
 import { parseBing, decodeBingLink, cleanQuery, describeSearchFail } from './lib/search.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
@@ -436,6 +436,15 @@ async function main() {
   r = await req('GET', '/api/workguard');
   check('切回非工作时段（周六）就不锁', r.data.enabled === true && r.data.blocked === false);
   await req('PUT', '/api/config', { baseUrl: savedBase }); // 还原原来那个接口地址
+  // 测试环境里数据目录是新建的，savedBase 就是**开箱默认值**。v2.3.36 起默认已经是
+  // 本地 Ollama（127.0.0.1:11434），而下面「维度 / 备忘 / 字数上限 / 关思考」这些断言
+  // cover 的是**完整 system** 才有的段落（精简版和极简版本来就不写这些），
+  // 所以这里必须先把后端钉成"云端 + 完整提示词 + 非极简"，否则断言对象根本不对。
+  // （这一行是 v2.4.1 补的：修复前这 21 条失败与业务逻辑无关，是测试没有把前提钉死。）
+  await req('PUT', '/api/config', {
+    baseUrl: 'https://api.deepseek.com/v1', workGuard: true,
+    fullSystem: true, compactSystem: false, model: 'deepseek-flash', thinkOff: false,
+  });
 
   // 描写幅度（维度图）：配置持久化 + 真的进了上下文
   r = await req('PUT', '/api/config', { dims: [{ name: '动作', level: 4 }, { name: '环境', level: 0 }] });
@@ -480,9 +489,15 @@ async function main() {
   r = await req('GET', '/api/config');
   check('备忘能读回', r.data.memo === '现在在浴室，热水已放好；约定不加价');
   r = await req('GET', `/api/context?sessionId=${guardSess.id}`);
-  check('备忘进了上下文接口且在最末尾',
-    r.data.system.includes('约定不加价')
-    && r.data.system.trimEnd().endsWith('直接照着演。）')
+  // v2.4.1：备忘已经**不再**是整个 system 的最后一段 —— 现在的顺序是
+  //   备忘 → 【字数上限】→ 场景推进 → 【本轮暗号】，后面的都是"比备忘更硬"的要求
+  //   （见 lib/prompt.js systemPrompt 末尾的注释：recency 最强的位置留给硬约束）。
+  //   所以断言改成：备忘在系统提示词里、且排在【扮演要求】之后、字数上限之前。
+  const sysNow = String(r.data.system || '');
+  check('备忘进了上下文接口，且排在硬约束之前',
+    sysNow.includes('约定不加价')
+    && sysNow.indexOf('约定不加价') > sysNow.indexOf('扮演要求')
+    && (!sysNow.includes('【字数上限】') || sysNow.indexOf('约定不加价') < sysNow.indexOf('【字数上限】'))
     && r.data.stats.memoChars > 0);
   await req('PUT', '/api/config', { memo: '' });
   r = await req('GET', `/api/context?sessionId=${guardSess.id}`);
@@ -552,7 +567,12 @@ async function main() {
     sys.includes('至少说出两句台词') && sys.includes('不是写小说或写日记'));
   check('提示词禁止替对方行动/写心理',
     sys.includes('不要替对方行动') && sys.includes('你感到'));
-  check('提示词禁止旁白式跳时间', sys.includes('跳时间'));
+  // v2.4.1：完整 system 的第 9 条禁止的是"旁白式的总结（就这样/接下来/几分钟后…）"，
+  //   字面量「跳时间」只出现在 dimsBlock 和 lean 版里 —— 原来的断言找错了关键词。
+  check('提示词禁止旁白式跳时间',
+    sys.includes('不要写旁白式的总结') && sys.includes('几分钟后'));
+  check('维度段里也明确写了「不跳时间」',
+    dimsBlock([{ name: '动作', level: 5 }]).includes('不跳时间'));
   check('维度段声明"只调比例、不改硬要求"',
     dimsBlock([{ name: '动作', level: 5 }]).includes('不改变其它硬性要求'));
 
@@ -824,17 +844,48 @@ async function main() {
     !dimsBlock([{ name: '常用词', level: 8 }]).includes('常用词'));
 
   // 常用词频率（滥用口头禅的源头：以前写死"每一两句至少带一个"）
-  check('常用词 0 档 = 这一轮一次都不要用', phrasesLine(['姐姐'], 0).includes('一次都不要用'));
+  // v2.4.1：0 档的实际实现（v2.3.1 起）是**完全不列词表**、只给一句"别用直白生理名词"的约束
+  //   （实测：只要词被看见模型就会用，所以 0 档必须不给清单）。原断言找的是
+  //   已被删掉的旧文案「一次都不要用」。
+  check('常用词 0 档 = 不给词表、只给约束',
+    !phrasesLine(['姐姐'], 0).includes('姐姐') && phrasesLine(['姐姐'], 0).includes('不要'));
+  check('常用词 0 档的措辞不是"一次都不要用"（那是会给词表的旧实现）',
+    !phrasesLine(['姐姐'], 0).includes('一次都不要用'));
   check('常用词低档 = 最多一次', phrasesLine(['姐姐'], 2).includes('最多出现一次'));
-  check('常用词中档 = 一到两次（默认也是这档）',
-    phrasesLine(['姐姐'], 4).includes('一到两次') && phrasesLine(['姐姐'], null).includes('一到两次'));
+  // v2.4.1：中档现在的文案是「整条回复**最多一次**；多数回合**一次都不用**」（v2.3.x 收紧过），
+  //   不再是「一到两次」。断言改成看"频率是上限、不是指标"这个真正要保证的语义。
+  check('常用词中档 = 是上限不是指标（默认也是这档）',
+    phrasesLine(['姐姐'], 4).includes('最多一次')
+    && phrasesLine(['姐姐'], null).includes('最多一次')
+    && phrasesLine(['姐姐'], 4).includes('这是上限，不是指标'));
   check('常用词高档 = 可以频繁',
     phrasesLine(['姐姐'], 10).includes('频繁使用') && phrasesLine(['姐姐'], 7).includes('多用一些'));
   check('没有常用词就不生成这一段', phrasesLine([], 5) === '');
+
+  // v2.4.1 审计修复：极简 system（compactSystem）原来把用户的开关**静默吞掉** ——
+  //   维度、场景推进、关键词暗号全都不生效（实测线上 compactSystem=true，等于设置白调）。
+  //   这里钉住"极简模式也要遵守这些设置"，同时钉住它仍然保持精简。
+  {
+    const cChar = { name: '林晚', persona: 'x', scenario: 'y' };
+    const cSys = (o) => previewContext(cChar, [{ role: 'user', content: '你好' }], 7200, '',
+      { compactSystem: true, localBackend: true, maxChars: 140, ...o }).messages[0].content;
+    check('★ 极简模式：维度设置照样生效', cSys({ dims: [{ name: '环境', level: 0 }] }).includes('【描写幅度】'));
+    check('★ 极简模式：场景推进照样注入', cSys({ timeNudge: '【场景推进】时间往前走一点' }).includes('时间往前走一点'));
+    check('★ 极简模式：关键词暗号照样注入',
+      cSys({ keywordActions: [{ kw: '雨', action: '看向窗外' }] }).includes('看向窗外'));
+    const all = cSys({
+      dims: [{ name: '环境', level: 0 }, { name: '动作', level: 5 }],
+      timeNudge: '【场景推进】x', keywordActions: [{ kw: '雨', action: '看向窗外' }], noKnowledge: true,
+    });
+    check('★ 极简模式：全开也仍然精简（< 1500 字）', all.length < 1500);
+  }
   const phraseCtx = previewContext({ name: '林晚', persona: 'x', phrases: '姐姐\n别急' }, [{ role: 'user', content: '（进屋）' }], 12000, '', { dims: [{ name: '常用词', level: 0 }] });
-  check('常用词维度进了系统提示词', phraseCtx.messages[0].content.includes('一次都不要用'));
+  // v2.4.1：0 档不进词表 → 系统提示词里**不能**出现这个词，改断言这一点
+  check('常用词维度 0 档 = 系统提示词里不出现这个词',
+    !phraseCtx.messages[0].content.includes('姐姐')
+    && phraseCtx.messages[0].content.includes('不要**使用过于直白'));
   const phraseDefault = previewContext({ name: '林晚', persona: 'x', phrases: '姐姐' }, [{ role: 'user', content: '（进屋）' }], 12000, '', {});
-  check('没设过常用词维度时用克制默认值', phraseDefault.messages[0].content.includes('一到两次'));
+  check('没设过常用词维度时用克制默认值', phraseDefault.messages[0].content.includes('最多一次'));
   check('自定义维度也进提示词（没有解释也不硬编）', dimsBlock([{ name: '心理', level: 4 }]).includes('心理') && dimsBlock([{ name: '心理', level: 4 }]).includes('4/10'));
   const dimsCtx = previewContext({ name: '林晚', persona: 'x' }, [{ role: 'user', content: '（进屋）' }], 12000, '', { dims: [{ name: '环境', level: 0 }] });
   const plainCtx = previewContext({ name: '林晚', persona: 'x' }, [{ role: 'user', content: '（进屋）' }], 12000, '', {});
@@ -1310,8 +1361,27 @@ async function main() {
   //   于是开关开着、预览里却看不到 /no_think（预览撒谎是这类功能最致命的 bug）。
   await req('PUT', '/api/config', { thinkOff: true });
   r = await req('GET', `/api/context?sessionId=${guardSess.id}`);
-  check('★ 关掉思考：角色模式的「查看上下文」里也能看到 /no_think',
-    r.status === 200 && String(r.data.system || '').trimEnd().endsWith('/no_think'));
+  // v2.4.1：/no_think 是拼在 system 里的（previewContext 追加），但**不保证是最后一段**
+  //   （等义词块在它之前拼接、后续还可能追加别的块）。断言改成"确实在 system 里"。
+  // v2.4.1：这条曾经是"预览撒谎"的看门断言（v0.53.0 漏传 thinkOff），
+  //   但现在**关思考的入口按模型分派**（见 lib/ollama.js thinkControl）：
+  //   认识的模型一律走请求体 think:false，system 里写 /no_think 反而会污染提示词。
+  //   所以断言改成两件事：① 认识的模型 → 请求体路径、system 里**没有** /no_think；
+  //   ② 认不出的模型 → 才回落到 system 里的 /no_think。
+  // v2.4.1：关思考改为「问服务端能力再决定」（见 thinkPlan），system 里**一律不写** /no_think；
+  //   这里只保证：开关打开后预览不会骗人（thinkControl 有说法、system 没被污染）。
+  check('★ 关掉思考：预览如实说明走哪种方式，且 system 里不写 /no_think',
+    r.status === 200
+    && String(r.data.thinkControl || '').length > 0
+    && !String(r.data.system || '').includes('/no_think'));
+  // 顺带钉住一个事实：thinkControl() 目前**任何模型名都返回 think_false**
+  //   （v2.3.x 起所有分支都改成了请求体，最后一行的兜底也是 think_false）。
+  //   也就是说 thinkPlan().systemInject 现在是**不可达的**，system 里永远不会出现 /no_think ——
+  //   previewContext 里那条 `if (opts.thinkOff) system += NO_THINK` 目前是死分支。
+  //   这是 v2.4.1 审计记录在案的现状，这里只做回归保护，不改行为。
+  const unknownControl = thinkControl('model-with-unknown-thinking');
+  check('关掉思考：thinkControl 对所有模型都走请求体（system 注入路径目前不可达）',
+    unknownControl === 'think_false');
   await req('PUT', '/api/config', { thinkOff: false });
   r = await req('GET', `/api/context?sessionId=${guardSess.id}`);
   check('★ 关掉思考：关回去后「查看上下文」里没有 /no_think',
@@ -1475,6 +1545,14 @@ async function main() {
     mreq.on('data', (c) => { raw += c; });
     mreq.on('end', () => {
       try { seen = { url: mreq.url, body: JSON.parse(raw || '{}') }; } catch { seen = { url: mreq.url, body: null }; }
+      // v2.4.1：这个 mock 是 **OpenAI 兼容**服务，不是 Ollama —— 必须自己声明清楚。
+      //   客户端的规则是"baseUrl 是 127.0.0.1 → 一律先探活 /api/tags，成功就走 Ollama 原生"，
+      //   而 mock 原来对任何路径都回 200 的 SSE，于是被当成 Ollama，
+      //   请求打到了 /api/chat 而不是 /v1/chat/completions（下面那组断言全挂）。
+      //   （这一组在修复前的仓库里也是红的，原因同样是这个。）
+      if (mreq.url === '/api/tags') { mres.writeHead(404).end(); return; }
+      // v2.4.1：只把 /chat/completions 当成模型调用（/api/show 之类是能力探测）
+      if (!/\/chat\/completions$/.test(mreq.url)) { mres.writeHead(404).end(); return; }
       mres.writeHead(200, { 'Content-Type': 'text/event-stream' });
       mres.write(mockSse('好的，'));
       mres.write(mockSse('我记住了。'));
@@ -1485,6 +1563,8 @@ async function main() {
   await new Promise((resolve) => mock.listen(0, '127.0.0.1', resolve));
   const MOCK_PORT = mock.address().port;
   const baseBeforeDirect = (await req('GET', '/api/config')).data.baseUrl;
+  // 探活缓存按 host:port 记 60 秒，换服务前先清掉，否则会被旧结论带偏
+  clearOllamaProbe();
   await req('PUT', '/api/config', {
     baseUrl: `http://127.0.0.1:${MOCK_PORT}/v1`, model: 'mock-model', apiKey: 'mock-key',
     temperature: 0.5, extraBody: '{"seed":-1}',
@@ -1502,8 +1582,16 @@ async function main() {
   check('★ 请求里**没有 system 提示词**', Array.isArray(seen.body.messages) && seen.body.messages.every((m) => m.role !== 'system'));
   check('★ 请求里只有这个会话本身的消息', seen.body.messages.length === 1 && seen.body.messages[0].content === '记住 47');
   check('直连也是流式，且消息角色合法', seen.body.stream === true && seen.body.messages[0].role === 'user');
+  // v2.4.1：「额外请求参数」原样透传，但有一个**故意的例外** ——
+  //   `seed: -1`（Ollama 的"随机"写法）对云端 API 是非法值（DeepSeek 直接 422），
+  //   lib/openai.js parseExtraBody 会把它删掉。原来这条断言写死 seed === -1，
+  //   等于要求实现保留一个已知会打爆云端请求的字段。
   check('模型名 / 温度 / 额外参数按设置原样发出',
-    seen.body.model === 'mock-model' && seen.body.temperature === 0.5 && seen.body.seed === -1);
+    seen.body.model === 'mock-model' && seen.body.temperature === 0.5
+    && seen.body.seed === undefined);
+  // 正向用例放在直连这一整段**最后**再做：它会往会话里追加一条消息，
+  // 现在插在中间会把后面「多轮历史顺序 / 重新生成」那些断言的预期消息数全打乱。
+  // （v2.4.1 第一次改这里时就是这么把 4 条无关断言弄红的。）
 
   const afterOne = (await req('GET', `/api/sessions/${direct.id}`)).data.session;
   check('模型回复原样入库（没经过任何后处理）',
@@ -1592,7 +1680,10 @@ async function main() {
   check('common phrases: 一行一个 / 逗号 / 顿号都认', parsePhrases('罢了\n少废话，别闹、哼').length === 4);
   const phMid = directPhrasesBlock('罢了\n少废话', 5);
   check('directPhrasesBlock：带上词表和频率说明', phMid.includes('罢了') && phMid.includes('少废话') && phMid.includes('三四个回合'));
-  check('directPhrasesBlock：档位 0 = 一次都不要用', directPhrasesBlock('罢了', 0).includes('一次都不要用'));
+  // v2.4.1：0 档的现行实现是**不给词表、只给一句别用直白生理名词的约束**
+  //   （v2.3.1 起；理由是"只要词被看见模型就会用"）。旧断言找的是已删掉的旧文案。
+  check('directPhrasesBlock：档位 0 = 不给词表',
+    !directPhrasesBlock('罢了', 0).includes('罢了') && directPhrasesBlock('罢了', 0).includes('不要'));
   check('directPhrasesBlock：档位 10 = 频繁使用', directPhrasesBlock('罢了', 10).includes('频繁'));
   check('directPhrasesBlock：档位超出范围会被收敛到 0~10', directPhrasesBlock('罢了', 99).includes('频繁'));
 
@@ -1608,9 +1699,19 @@ async function main() {
   r = await req('POST', '/api/direct/phrases', { text: '罢了，少废话', level: 3 });
   check('常用语预览接口：给出条数 / 档位 / 会发出去的那段',
     r.status === 200 && r.data.count === 2 && r.data.level === 3
-    && r.data.block.includes('罢了') && r.data.how.includes('一到两次'));
+    && r.data.block.includes('罢了') && r.data.how.includes('最多一次'));
+  // v2.4.1：档位 3 的现行文案是「整条回复最多一次；多数回合一次都不用」
+  //   （phrasesLine 在 v2.3.x 收紧过措辞），旧断言找的是「一到两次」。
   r = await req('POST', '/api/direct/phrases', { text: '', level: 5 });
   check('常用语预览接口：空词表 = 空段（零注入）', r.data.count === 0 && r.data.block === '' && r.data.how === '');
+
+  // 「额外请求参数」正向用例（放在段尾，不影响上面按消息条数的断言）
+  await req('PUT', '/api/config', { extraBody: '{"seed":42,"top_p":0.9}' });
+  seen = null;
+  await directChat({ content: '额外参数测试' });
+  check('额外请求参数：合法字段原样透传到请求体',
+    seen.body.seed === 42 && seen.body.top_p === 0.9);
+  await req('PUT', '/api/config', { extraBody: '{"seed":-1}' });
 
   seen = null;
   await directChat({ content: '在吗？' });
@@ -1644,14 +1745,15 @@ async function main() {
   check('关掉思考：能存能读', (await req('GET', '/api/config')).data.thinkOff === true);
 
   r = await req('GET', `/api/direct/context?sessionId=${direct.id}`);
-  check('★ 关掉思考：直连的 system 里出现 /no_think（不然它不生效）',
-    r.data.system.includes('/no_think') && r.data.stats.systemChars > 0);
+  // v2.4.1：直连模式**不再**为关思考注入 system —— 关思考走请求体 think:false，
+  //   而 /no_think 实测多数模板不读、还会把提示词搅浑。"直连零 system"这个设计保持不变。
+  check('★ 关掉思考：直连模式不为关思考注入 system（零注入原则不变）',
+    r.status === 200 && !String(r.data.system || '').includes('/no_think'));
   seen = null;
   await directChat({ content: '开了关思考之后呢？' });
   const thinkSys = (seen.body.messages || []).filter((m) => m.role === 'system');
-  check('★ 关掉思考：请求里正好一段 system、且就是 /no_think（不是塞进 user 消息）',
-    thinkSys.length === 1 && thinkSys[0].content.includes('/no_think')
-    && (seen.body.messages || []).slice(1).every((m) => m.role !== 'system'));
+  check('★ 关掉思考：请求里没有塞 /no_think 的 system（关思考走请求体）',
+    thinkSys.every((m) => !m.content.includes('/no_think')));
 
   await req('PUT', '/api/config', { thinkOff: false });
   seen = null;
@@ -1670,6 +1772,13 @@ async function main() {
   const scripted = (replies) => {
     const calls = [];
     const s = createServer((mreq, mres) => {
+      // v2.4.1：同前面那个 mock —— 这是 OpenAI 兼容服务，必须对 /api/tags 回 404，
+      //   否则会被 isOllamaBase 当成 Ollama，请求改走原生 /api/chat（没有 system 段），
+      //   下面"重抽那次不再注入常用语"这类断言就全对不上。
+      if (mreq.url === '/api/tags') { mres.writeHead(404).end(); return; }
+      // v2.4.1：探活/能力探测的请求（/api/show、/api/ps…）**不是**模型调用，
+      //   不能记进 calls —— 否则 calls[0] 变成探测请求，后面按 calls[0] 写的断言全错位。
+      if (!/\/chat\/completions$/.test(mreq.url)) { mres.writeHead(404).end(); return; }
       let raw = '';
       mreq.on('data', (c) => { raw += c; });
       mreq.on('end', () => {
@@ -1700,6 +1809,10 @@ async function main() {
   // ① 提问那一轮
   let mockSc = scripted([STUFFED, CLEAN]);
   await new Promise((resolve) => mockSc.s.listen(0, '127.0.0.1', resolve));
+  // v2.4.1：清探活缓存，并让它**真的**探一遍（否则同端口上先前那个 mock 的"是 Ollama"
+  //   结论会被沿用，请求打到 /api/chat，下面按 OpenAI 请求体写的断言就全对不上）。
+  clearOllamaProbe(); clearThinkCapCache();
+  await isOllamaBase({ baseUrl: `http://127.0.0.1:${mockSc.s.address().port}/v1` });
   await req('PUT', '/api/config', { baseUrl: `http://127.0.0.1:${mockSc.s.address().port}/v1`, model: 'mock-model', apiKey: 'mock-key' });
   const askRes = await fetch(`${BASE}/api/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1738,6 +1851,8 @@ async function main() {
   // ③ 直连模式：同样只在那三条同时成立时才动手
   mockSc = scripted([STUFFED, CLEAN]);
   await new Promise((resolve) => mockSc.s.listen(0, '127.0.0.1', resolve));
+  clearOllamaProbe(); clearThinkCapCache();
+  await isOllamaBase({ baseUrl: `http://127.0.0.1:${mockSc.s.address().port}/v1` });
   await req('PUT', '/api/config', {
     baseUrl: `http://127.0.0.1:${mockSc.s.address().port}/v1`,
     directPhrases: '潮吹液\n爱液', directPhraseLevel: 7, dims: null, hint: '',
@@ -1749,11 +1864,14 @@ async function main() {
   }).then((x) => x.text());
   const dAfter = (await req('GET', `/api/sessions/${dSess.id}`)).data.session;
   const dReply = dAfter.messages.at(-1);
-  check('★ 硬凑常用词（直连）：提问那一轮也重抽，且重抽那次不注入常用语',
-    mockSc.calls.length >= 2 && mockSc.calls.slice(1).every((c) => !sysOf(c).includes('自然融进台词里')));
-  check('★ 硬凑常用词（直连）：干净那版入库，塞词那版进「已否决」',
-    dReply.content.includes('改天你教教我')
-    && (dReply.rejected || []).some((j) => /硬凑常用词/.test(j.reason || '') && j.text.includes('潮吹液')));
+  // v2.4.1：**直连模式不再为"硬凑常用词"重抽**（v2.3.20 起有意去掉）。
+  //   约定变成"直连就是看模型原话的地方，一个字都不动"，只有角色模式才做这类后处理/重抽。
+  //   原来这两条断言的是已被删除的行为，这里改成钉住现行约定（防止有人又把它加回来）。
+  check('★ 硬凑常用词（直连）：不重抽，只请求一次（直连是看模型原话的地方）',
+    mockSc.calls.length === 1);
+  check('★ 硬凑常用词（直连）：模型原话原样入库，不被改写也不进「已否决」',
+    dReply.content === STUFFED
+    && !(dReply.rejected || []).some((j) => /硬凑常用词/.test(j.reason || '')));
   await new Promise((resolve) => mockSc.s.close(resolve));
 
   // 收尾：把这一节改过的配置还原
@@ -1765,45 +1883,95 @@ async function main() {
   // ================= 「关掉思考」按模型分派（v0.59.0） =================
   // 实测：Qwen3 只认 system 里的 /no_think；R1 那代 /no_think **完全无效**，得发请求体的 think:false。
   // 所以"支持思考"这个 capability 不能直接等价于"该注入 /no_think"。
-  check('关思考分派：Qwen3 → system 里的 /no_think', thinkControl('qwen3-14b-abl-q8') === 'no_think');
-  check('关思考分派：R1→ 请求体的 think:false',
-    thinkControl('deepseek-r1:14b') === 'think_false'
-    && thinkControl('deepseek-r1:14b-qwen-distill-q4_K_M') === 'think_false');
-  check('关思考分派：认不出来的模型沿用老行为（/no_think），不会更差',
-    thinkControl('qwen2.5-14b') === 'no_think' && thinkControl('mock-model') === 'no_think');
+  // v2.4.1 重写：关思考**不再按模型名分派**，而是问服务端"这个模型到底支持什么"。
+  //   旧断言（Qwen3 → system 里的 /no_think）描述的那条路径现在已不可达：
+  //   thinkControl() 永远返回 think_false，system 注入分支是死的。
+  check('关思考分派：thinkControl 是保守兜底（不再按模型名猜）',
+    thinkControl('qwen3-14b-abl-q8') === 'think_false'
+    && thinkControl('qwen2.5-14b') === 'think_false'
+    && thinkControl('mock-model') === 'think_false');
 
+  // 能力探测：用一个会回答 /api/show 的假 Ollama
+  const fakeOllama = (showBody) => {
+    const calls = [];
+    const srv = createServer((mreq, mres) => {
+      let raw = '';
+      mreq.on('data', (c) => { raw += c; });
+      mreq.on('end', () => {
+        calls.push({ url: mreq.url, body: raw });
+        if (mreq.url === '/api/tags') { mres.writeHead(200).end('{"models":[]}'); return; }
+        if (mreq.url === '/api/show') { mres.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(showBody)); return; }
+        mres.writeHead(404).end();
+      });
+    });
+    return { srv, calls };
+  };
+  const withThinking = fakeOllama({ capabilities: ['completion', 'thinking'], template: '{{ if .EnableThinking }}…{{ end }}' });
+  await new Promise((r) => withThinking.srv.listen(0, '127.0.0.1', r));
+  clearOllamaProbe(); clearThinkCapCache();
+  const capYes = await probeThinkCapability({ baseUrl: `http://127.0.0.1:${withThinking.srv.address().port}/v1`, model: 'any-model' });
+  check('★ 能力探测：服务端说有 thinking → 支持思考、可走 think:false',
+    capYes.supportsThinking === true && capYes.thinkField === true
+    && capYes.source === 'api-show:capabilities');
+  await new Promise((r) => withThinking.srv.close(r));
+
+  const noThinking = fakeOllama({ capabilities: ['completion'], template: '{{ .Prompt }}' });
+  await new Promise((r) => noThinking.srv.listen(0, '127.0.0.1', r));
+  clearOllamaProbe(); clearThinkCapCache();
+  const capNo = await probeThinkCapability({ baseUrl: `http://127.0.0.1:${noThinking.srv.address().port}/v1`, model: 'any-model' });
+  check('★ 能力探测：服务端说没有 thinking → 不需要关，也不会硬塞字段',
+    capNo.supportsThinking === false && capNo.thinkField === false);
+  await new Promise((r) => noThinking.srv.close(r));
+  clearOllamaProbe(); clearThinkCapCache();
+
+  // 端到端：假 Ollama 声明支持思考 → 强制关思考时请求体带 think:false、system 里没有 /no_think
   const thinkChar = (await req('POST', '/api/characters', { name: '思考分派测试', persona: '测试用' })).data.character;
   const thinkSess = (await req('POST', '/api/sessions', { characterId: thinkChar.id })).data.session;
-  const thinkMock = scripted(['*我把杯子放到桌上* 好，我记住了，这就来。']);
-  await new Promise((resolve) => thinkMock.s.listen(0, '127.0.0.1', resolve));
+  const nativeSeen = [];
+  const fakeNative = createServer((mreq, mres) => {
+    let raw = '';
+    mreq.on('data', (c) => { raw += c; });
+    mreq.on('end', () => {
+      if (mreq.url === '/api/tags') { mres.writeHead(200).end('{"models":[]}'); return; }
+      if (mreq.url === '/api/show') {
+        mres.writeHead(200, { 'Content-Type': 'application/json' })
+          .end(JSON.stringify({ capabilities: ['completion', 'thinking'], template: '{{ if .EnableThinking }}x{{ end }}' }));
+        return;
+      }
+      try { nativeSeen.push(JSON.parse(raw || '{}')); } catch { nativeSeen.push(null); }
+      mres.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+      mres.write(JSON.stringify({ message: { role: 'assistant', content: '*我把杯子放到桌上* 好，我记住了。' }, done: false }) + '\n');
+      mres.write(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true, eval_count: 10, prompt_eval_count: 20 }) + '\n');
+      mres.end();
+    });
+  });
+  await new Promise((r) => fakeNative.listen(0, '127.0.0.1', r));
+  clearOllamaProbe(); clearThinkCapCache();
   await req('PUT', '/api/config', {
-    baseUrl: `http://127.0.0.1:${thinkMock.s.address().port}/v1`, model: 'deepseek-r1:14b',
+    baseUrl: `http://127.0.0.1:${fakeNative.address().port}/v1`, model: 'any-thinking-model',
     apiKey: 'mock-key', thinkOff: true, autoClean: false,
   });
   await fetch(`${BASE}/api/chat`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId: thinkSess.id, content: '记住 47' }),
   }).then((x) => x.text());
-  check('★ 关思考（R1）：请求体里带 think:false', thinkMock.calls[0]?.think === false, JSON.stringify(thinkMock.calls[0]?.think));
-  check('★ 关思考（R1）：system 里**不该**再塞 /no_think（那对它没用）',
-    !sysOf(thinkMock.calls[0]).includes('/no_think'));
+  check('★ 关思考（服务端说支持思考）：请求体里带 think:false',
+    nativeSeen[0]?.think === false, JSON.stringify(nativeSeen[0]?.think));
+  check('★ 关思考：system 里**不再**塞 /no_think（实测污染提示词且照样思考）',
+    !sysOf(nativeSeen[0]).includes('/no_think'));
   r = await req('GET', `/api/context?sessionId=${thinkSess.id}`);
-  check('★ 关思考（R1）：「查看上下文」如实报出用的是 think:false',
+  check('★ 关思考：「查看上下文」如实报出用的是 think:false',
     r.data.thinkControl === 'think:false（请求体）' && !String(r.data.system || '').includes('/no_think'));
 
-  // 换回 Qwen3：又该走 system 里的 /no_think，且请求体里没有 think 字段
-  thinkMock.calls.length = 0;
-  await req('PUT', '/api/config', { model: 'qwen3-14b-abl-q8' });
-  await fetch(`${BASE}/api/chat`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionId: thinkSess.id, content: '再记一次 48' }),
-  }).then((x) => x.text());
-  check('★ 关思考（Qwen3）：system 里是 /no_think、请求体里没有 think 字段',
-    sysOf(thinkMock.calls[0]).includes('/no_think') && thinkMock.calls[0]?.think === undefined);
-  r = await req('GET', `/api/context?sessionId=${thinkSess.id}`);
-  check('★ 关思考（Qwen3）：「查看上下文」报的是 /no_think（system）',
-    r.data.thinkControl === '/no_think（system）' && String(r.data.system || '').includes('/no_think'));
-  await new Promise((resolve) => thinkMock.s.close(resolve));
+  // 思考强度：本地后端必须明确"不可用"（以前填了悄无声息不生效）
+  r = await req('GET', '/api/config');
+  check('★ 思考强度：本地 Ollama 上明确标记为不可用（不再假装生效）',
+    r.data.thinkStrength && r.data.thinkStrength.usable === false
+    && /reasoning_effort/.test(r.data.thinkStrength.reason));
+  await req('PUT', '/api/config', { baseUrl: 'https://api.deepseek.com/v1', reasoningEffort: 'high' });
+  r = await req('GET', '/api/config');
+  check('思考强度：云端后端标记为可用', r.data.thinkStrength && r.data.thinkStrength.usable === true);
+  await new Promise((resolve) => fakeNative.close(resolve));
   await req('PUT', '/api/config', { model: 'mock-model', thinkOff: false, autoClean: true });
   await req('DELETE', `/api/characters/${thinkChar.id}`);
 

@@ -18,6 +18,18 @@ MODE="dev"
 [ "$1" = "--release" ] && MODE="release"
 
 VERSION="$(node -p "require('$ROOT/package.json').version")"
+
+# ── 版本号一致性硬校验（v2.4.1）──────────────────────────────────────────────
+# 教训：v2.3.35~v2.3.42 共 8 次提交忘了改 package.json 的 version，
+#   于是前端页脚和 /api/version 一直报 2.3.34，CHANGELOG 更是停在 2.3.10 ——
+#   "手机上跑的是不是新包"这个设计目的彻底失效。
+# 现在打包时强制校验：CHANGELOG.md 顶部必须有一节 `## <version>`。
+if ! grep -q "^## ${VERSION}\b" "$ROOT/CHANGELOG.md"; then
+  echo "✗ CHANGELOG.md 里找不到 '## ${VERSION}' 这一节。" >&2
+  echo "  改版本号时必须同时在 CHANGELOG.md 顶部加一节（最近一节是：$(grep -m1 '^## ' "$ROOT/CHANGELOG.md")）" >&2
+  exit 1
+fi
+echo "  version  : $VERSION（CHANGELOG 已同步）"
 if [ "$MODE" = "release" ]; then SUFFIX=""; TAG="发行包"; else SUFFIX="-dev"; TAG="开发包"; fi
 OUT="$(dirname "$ROOT")/$NAME-v$VERSION$SUFFIX.zip"
 

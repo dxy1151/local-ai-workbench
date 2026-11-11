@@ -1,4 +1,8 @@
-cd ~/local-ai-workbench && node start.js
+cd /mnt/data4t/xingye-chat-portable && node start.js
 启动（Linux：默认 http://127.0.0.1:5178；手机连用 node start.js 5178 0.0.0.0）
-或者： bash ~/local-ai-workbench/linux/run.sh
-数据目录：默认 ./data（空壳子自带的是空的；要指到同步目录就写 data-dir.txt）
+或者： bash /mnt/data4t/xingye-chat-portable/linux/run.sh
+数据目录：默认 ./data；本机部署写在 data-dir.txt 里（当前是 /mnt/data4t/xingye-sync）
+systemd 自启动：systemctl --user {status,restart} xingye-chat
+
+> v2.4.1 修复：原来这里写的是 ~/local-ai-workbench —— 那个目录**确实存在**，
+> 但它是**另一个项目副本**。照原文执行会启动错的程序、读写错的数据。

@@ -546,6 +546,19 @@ function fillSettingsForm() {
   if (form.thinkForce) form.thinkForce.checked = config.thinkForce === true;
   form.reasoningEffort.value = ['none', 'low', 'high', 'max'].includes(config.reasoningEffort)
     ? config.reasoningEffort : 'high';
+  // v2.4.1：思考强度只对云端接口生效。本地后端上这个下拉框以前照样能选，
+  //   选了却悄无声息不生效 —— 现在直接灰掉，并在旁边说清原因。
+  {
+    const sup = config.thinkStrength || { usable: true, reason: '' };
+    form.reasoningEffort.disabled = !sup.usable;
+    const note = document.getElementById('reasoning-effort-note');
+    if (note) {
+      note.textContent = sup.usable ? '' : `⚠ ${sup.reason}`;
+      note.hidden = sup.usable;
+    }
+    if (sup.usable) form.reasoningEffort.title = '';
+    else form.reasoningEffort.title = sup.reason;
+  }
   // 多人卡每轮开口几率（v1.7.2）
   form.castSpeakChance.value = Number.isFinite(Number(config.castSpeakChance)) ? Number(config.castSpeakChance) : 65;
   const cco = $('#cast-chance-out');
@@ -566,6 +579,10 @@ function fillSettingsForm() {
   if (form.compactSystem) form.compactSystem.checked = config.compactSystem === true;
   if (form.systemInUser) form.systemInUser.checked = config.systemInUser === true;
   if (form.repeatPenalty) form.repeatPenalty.value = config.repeatPenalty != null ? config.repeatPenalty : 1.1;
+  // v2.4.1：这两个此前"后端读、前端无控件"，只能手改 config.json
+  if (form.maxTries) form.maxTries.value = config.maxTries != null ? config.maxTries : 2;
+  if (form.l1TopicPick) form.l1TopicPick.checked = config.l1TopicPick === true;
+  if (form.fullSystem) form.fullSystem.checked = config.fullSystem === true;
   form.autoPair.checked = config.autoPair !== false;
   form.forceAction.checked = config.forceAction !== false;
   form.cleanHistory.checked = config.cleanHistory !== false;
@@ -621,6 +638,10 @@ async function submitSettings(e) {
     compactSystem: form.compactSystem ? form.compactSystem.checked : false,
     systemInUser: form.systemInUser ? form.systemInUser.checked : false,
     repeatPenalty: form.repeatPenalty ? Number(form.repeatPenalty.value) : 1.1,
+    maxTries: form.maxTries ? Number(form.maxTries.value) : 2,
+    l1TopicPick: form.l1TopicPick ? form.l1TopicPick.checked : false,
+    // v2.4.1：fullSystem 一直有后端分支却没有入口 —— 补上控件（与 compactSystem 互斥，见 index.html 文案）
+    fullSystem: form.fullSystem ? form.fullSystem.checked : false,
     autoPair: form.autoPair.checked,
     forceAction: form.forceAction.checked,
     cleanHistory: form.cleanHistory.checked,
