@@ -3085,9 +3085,34 @@ async function refreshConfig() {
 }
 
 async function refreshCharacters() {
-  const { characters } = await api('/api/characters');
-  state.characters = characters;
-  renderCharacters();
+  // v2.3.41：开机竞态兜底。
+  // 机器重启后 /mnt/data4t（NTFS 机械盘）刚挂上、服务刚起来的那几秒，
+  // 页面可能拿到一个空数组，然后一直显示「一个角色都没有」——用户以为数据丢了。
+  // 这里：拿到空列表就自动重试几次（200ms/500ms/1s/2s/3s），服务就绪后自然拿到数据。
+  const delays = [0, 200, 500, 1000, 2000, 3000];
+  let lastErr = null;
+  for (let i = 0; i < delays.length; i += 1) {
+    if (delays[i]) await new Promise((r) => setTimeout(r, delays[i]));
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const { characters } = await api('/api/characters');
+      if (Array.isArray(characters) && characters.length > 0) {
+        state.characters = characters;
+        renderCharacters();
+        if (i > 0) toast('数据已就绪（刚开机，稍等了一下）');
+        return;
+      }
+      if (Array.isArray(characters) && characters.length === 0 && i === delays.length - 1) {
+        // 真的一个都没有（新装/空库）→ 照实渲染，不报错
+        state.characters = characters;
+        renderCharacters();
+        return;
+      }
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  if (lastErr) throw lastErr;
 }
 
 async function refreshSessions() {
