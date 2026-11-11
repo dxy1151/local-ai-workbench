@@ -17,7 +17,7 @@ import { sendButtonState } from './public/uistate.js';
 import { parseCheat, describeCheat } from './public/cheat.js';
 import { slashTrigger, filterCharacters, conversationSpeakers } from './public/slashpick.js';
 import { workState, humanLeft, isLocalEndpoint } from './lib/workguard.js';
-import { previewContext, buildMessages, normalizeCastSpeaker, asNudge, applyAsIdentity, dropAsSpeaker, splitInlineSpeakers, regenerateNudge, antiStallNudge, personNudge, clicheNudge, continueNudge, openingPrefill, estimateTokens, CONTEXT_BUDGET, dimsBlock, hintBlock, normalizeHint, memoBlock, normalizeMemo, MEMO_MAX, limitBlock, normalizeMaxChars, phrasesLine, clampDimLevel, DIM_MAX, directMessages, directPhrasesBlock, parsePhrases, synonymsBlock, webSearchBlock } from './lib/prompt.js';
+import { previewContext, buildMessages, normalizeCastSpeaker, asNudge, applyAsIdentity, dropAsSpeaker, splitInlineSpeakers, regenerateNudge, antiStallNudge, personNudge, clicheNudge, continueNudge, openingPrefill, estimateTokens, CONTEXT_BUDGET, dimsBlock, hintBlock, normalizeHint, memoBlock, normalizeMemo, MEMO_MAX, limitBlock, normalizeMaxChars, phrasesLine, clampDimLevel, DIM_MAX, directMessages, directPhrasesBlock, parsePhrases, synonymsBlock, webSearchBlock, detailNudge, effectiveMaxChars } from './lib/prompt.js';
 import { trimToLimit, describeTrim } from './lib/limit.js';
 import { detectTailLoop, cutLoop, describeLoop, detectDuplicateSentence, cutDuplicate } from './lib/loopguard.js';
 import { normalizeMarkup, normalizePerson, describeMarkup, thirdPersonSubjects } from './lib/markup.js';
@@ -1351,6 +1351,23 @@ async function main() {
   r = await req('GET', '/api/config');
   check('字数上限能读回', r.data.maxChars === 150);
   r = await req('GET', `/api/context?sessionId=${guardSess.id}`);
+  // v2.4.2：**字数下限整体删除**，字数只保留用户自己设的那一个上限。
+  //   历史 bug：重抽会要求"至少写 440 字"而上限是"不超过 420 字"，同一轮自相矛盾。
+  {
+    const wcPat = /\d+\s*~\s*\d+\s*字|\d+\s*字是硬下限|至少写 \d+ 字|每轮 \d+/;
+    const wcSys = (o) => previewContext({ name: '林晚', persona: 'x' }, [{ role: 'user', content: '你好' }], 7200, '', o).messages[0].content;
+    check('★ 字数限制：没设上限时提示词里一个字都不提字数',
+      !wcSys({ localBackend: true }).match(wcPat)
+      && !wcSys({ compactSystem: true, localBackend: true }).match(wcPat)
+      && !wcSys({ localBackend: false, fullSystem: true }).match(wcPat));
+    check('★ 字数限制：设了上限就只出现那一个上限（不再有区间/硬下限）',
+      wcSys({ localBackend: true, maxChars: 140 }).includes('不要超过 140 字')
+      && !wcSys({ localBackend: true, maxChars: 140 }).match(wcPat));
+    check('★ 字数限制：「上一版太单薄」提示里不再带任何字数数字',
+      !/\d+\s*字/.test(detailNudge(440, 100)) && detailNudge().includes('补 2 个'));
+    check('★ 字数限制：本地后端不再有 420 字兜底上限',
+      effectiveMaxChars(0, { localBackend: true }) === 0);
+  }
   check('字数上限进了上下文接口',
     r.data.stats.maxChars === 150 && r.data.system.includes('不要超过 150 字'));
   await req('PUT', '/api/config', { maxChars: 0 });

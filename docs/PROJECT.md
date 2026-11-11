@@ -513,7 +513,7 @@ bash build.sh [--release]              # 打包 zip 到上一级目录
 | `hint` / `hintPresets` | `''` / `[]` | 全局默认微调提示 / 提示预设（≤20 条） |
 | `synonyms` / `synonymsOutput` | `''` / `false` | 等义词表；`#输出` 标记的才进输出侧 |
 | `memo` | `''` | 场景备忘（≤800 字） |
-| `maxChars` | `0` | 回复字数上限（0=不限，上限 2000） |
+| `maxChars` | `0` | 回复字数上限（**0 = 不限，默认**；上限 2000）。v2.4.2 起：0 时提示词里不出现任何字数指令，本地后端也不再兜 420；**没有字数下限** |
 | `autoClean` | `true` | 自动清「凭空动静」 |
 | `forceAction` | `true` | 「动作开头」prefill |
 | `cleanHistory` | `true` | 发送前清洗历史（只改发出去的，不改存档） |
