@@ -22,7 +22,7 @@ import { trimToLimit, describeTrim } from './lib/limit.js';
 import { detectTailLoop, cutLoop, describeLoop, detectDuplicateSentence, cutDuplicate } from './lib/loopguard.js';
 import { normalizeMarkup, normalizePerson, describeMarkup, thirdPersonSubjects } from './lib/markup.js';
 import { MAX_OUTPUT_TOKENS, makePrefixJoiner, resolveModelId, cloudModelAliases } from './lib/openai.js';
-import { sanitizeReply, findInventedEvents, describeCleaned, stallScore, describeStall, replyQuality, describeQuality, cleanHistoryText, cleanHistory, stripClicheActions, countClicheActions, stripUserActions } from './lib/sanitize.js';
+import { sanitizeReply, findInventedEvents, describeCleaned, stallScore, describeStall, replyQuality, describeQuality, cleanHistoryText, cleanHistory, stripClicheActions, countClicheActions, stripUserActions, stripLeadingReasoning } from './lib/sanitize.js';
 import { chunkText, pickChunks, knowledgeBlock } from './lib/knowledge.js';
 import { speechText, ttsCacheKey } from './lib/tts.js';
 import { normalizeTts, getConfig as storeConfig, normalizeSearchSite, normalizeSearchCount, normalizeSearchChars } from './lib/store.js';
@@ -570,6 +570,29 @@ async function main() {
     sys.includes('不要替对方行动') && sys.includes('你感到'));
   // v2.4.1：完整 system 的第 9 条禁止的是"旁白式的总结（就这样/接下来/几分钟后…）"，
   //   字面量「跳时间」只出现在 dimsBlock 和 lean 版里 —— 原来的断言找错了关键词。
+  // v2.4.3：实测事故「用户发"奶包小"→ 模型没有产出内容」的三个根因，逐个钉住。
+  {
+    // ① 思考段和正文之间**没有空行**时，剥离必须生效（原来只按空行切段，整段泄漏留在正文里）
+    const leak1 = '也可能是想让我以第一人称扮演「孟楚瑶」继续场景对话。需要接住这句话并推进剧情。'
+      + '注意字数不超过140字好现在开始写正文：\n（指尖擦着礼服肩线）你来啦。';
+    check('★ 思考泄漏：正文前没有空行也要剥掉', !stripLeadingReasoning(leak1).text.includes('也可能是想让我')
+      && stripLeadingReasoning(leak1).text.startsWith('（指尖'));
+    const leak2 = '我要分析一下用户的意思好现在开始写正文：（指尖擦着礼服肩线）你好呀。';
+    check('★ 思考泄漏：连换行都没有也能剥掉', stripLeadingReasoning(leak2).text === '（指尖擦着礼服肩线）你好呀。');
+    // ② 引号没闭合 = 写到一半断了，必须判废（原来给 0 分直接放行，残片被存进历史）
+    const stub = '（指尖擦着礼服肩线，桃花眼湿漉漴望你）\n“';
+    check('★ 质量门：引号没闭合要判废（残片不能当回复存下去）',
+      replyQuality(stub, { contextText: '' }).score >= 4
+      && replyQuality(stub, { contextText: '' }).reasons.some((r) => /引号没闭合/.test(r)));
+    // ③ 截断不能留下没配对的括号/引号
+    const longWithQ = '（她抬起头看你，眼里有点湿）你来啦，我等了你好久。“刚才一直在想你会不会来，外头风那么大，我怕你着凉，真的。';
+    const tr = trimToLimit(longWithQ, 30);
+    const oq = (tr.text.match(/[“「]/g) || []).length;
+    const cq = (tr.text.match(/[”」]/g) || []).length;
+    const op = (tr.text.match(/[（(]/g) || []).length;
+    const cp = (tr.text.match(/[）)]/g) || []).length;
+    check('★ 截断：不留没配对的引号/括号', oq === cq && op === cp);
+  }
   check('提示词禁止旁白式跳时间',
     sys.includes('不要写旁白式的总结') && sys.includes('几分钟后'));
   check('维度段里也明确写了「不跳时间」',
