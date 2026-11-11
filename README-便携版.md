@@ -8,7 +8,8 @@
 
 | 角色 | 路径 | 说明 |
 | --- | --- | --- |
-| 部署目录（systemd 跑这个） | `/mnt/data4t/xingye-chat-portable` | 4TB 机械盘，v1.9.2 起从 data500 迁来（data500 偶尔脏盘挂不上，工作台就起不来） |
+| 部署目录（systemd 跑这个） | `/mnt/data4t/xingye-chat-fixed-portable` | 4TB 机械盘。**v2.4.2 起线上切到这里**（审计修复版）；v1.9.2 起从 data500 迁到 data4t |
+| 旧部署目录（回滚用） | `/mnt/data4t/xingye-chat-portable` | 停在 v2.3.42，保留不动，回滚时改回 systemd 的 ExecStart 即可 |
 | 数据目录 | `/mnt/data4t/xingye-sync` | 角色卡 / 会话 / 资料，`data-dir.txt` 指定；单独同步 |
 | 旧快照（只读参考） | `/mnt/data500/xingye-chat-portable` | **停在 v1.9.1**，不要再拿来跑 |
 
@@ -16,7 +17,7 @@
 
 ```bash
 # 在本机部署目录里改代码（它就是 git 仓库，分支见 git branch）
-cd /mnt/data4t/xingye-chat-portable
+cd /mnt/data4t/xingye-chat-fixed-portable
 git status                       # 确认改动范围
 node smoke.js                    # 自检：必须"全部通过 ✅"且退出码 0
 systemctl --user restart xingye-chat
