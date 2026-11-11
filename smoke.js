@@ -27,6 +27,7 @@ import { chunkText, pickChunks, knowledgeBlock } from './lib/knowledge.js';
 import { speechText, ttsCacheKey } from './lib/tts.js';
 import { normalizeTts, getConfig as storeConfig, normalizeSearchSite, normalizeSearchCount, normalizeSearchChars } from './lib/store.js';
 import { describePreloadFailure, thinkControl, clearOllamaProbe, probeThinkCapability, clearThinkCapCache, isOllamaBase } from './lib/ollama.js';
+import { residentKnowledgeFor } from './lib/server.js';
 import { parseBing, decodeBingLink, cleanQuery, describeSearchFail } from './lib/search.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
@@ -869,7 +870,21 @@ async function main() {
     const cChar = { name: '林晚', persona: 'x', scenario: 'y' };
     const cSys = (o) => previewContext(cChar, [{ role: 'user', content: '你好' }], 7200, '',
       { compactSystem: true, localBackend: true, maxChars: 140, ...o }).messages[0].content;
-    check('★ 极简模式：维度设置照样生效', cSys({ dims: [{ name: '环境', level: 0 }] }).includes('【描写幅度】'));
+    // v2.4.2：常驻知识（L1）相关 —— 之前 l1TopicPick 在 getConfig 里压根不存在（功能从未执行），
+  //   而且「查看上下文」预览**完全不显示**常驻知识（真实聊天却会注入 → 典型的"预览撒谎"）。
+  {
+    // 注意：样例必须有**足够多**的段，否则"全选 == 全文"看不出分段生效（第一次就是这么写错的）
+    const rk = '【称谓：台词里怎么说自慰】\n叫「那里」就行\n\n【敏感点与刺激方式】\n脖子、耳朵\n\n'
+      + '【性交体位（写姿势时带上名字）】\n观音坐莲式\n\n【自慰：女性】\n自己弄\n\n'
+      + '【口交收尾的说法】\n咽下去\n\n【女性外阴】\n耻骨联合';
+    const r1 = residentKnowledgeFor({ residentKnowledge: rk, l1TopicPick: false }, '你好');
+    check('★ 常驻知识：关着分段 = 整段全注入', r1.chars === rk.length && r1.block.includes('【常识参考'));
+    const r2 = residentKnowledgeFor({ residentKnowledge: rk, l1TopicPick: true }, '你摸摸我的脖子');
+    check('★ 常驻知识：开了分段 = 只挑相关段', r2.chars > 0 && r2.chars < rk.length && r2.picked >= 1);
+    const r0 = residentKnowledgeFor({ residentKnowledge: '' }, '你好');
+    check('常驻知识：没填 = 零注入', r0.chars === 0 && r0.block === '');
+  }
+  check('★ 极简模式：维度设置照样生效', cSys({ dims: [{ name: '环境', level: 0 }] }).includes('【描写幅度】'));
     check('★ 极简模式：场景推进照样注入', cSys({ timeNudge: '【场景推进】时间往前走一点' }).includes('时间往前走一点'));
     check('★ 极简模式：关键词暗号照样注入',
       cSys({ keywordActions: [{ kw: '雨', action: '看向窗外' }] }).includes('看向窗外'));
