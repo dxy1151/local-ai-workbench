@@ -1,0 +1,7 @@
+{
+  "_comment": "L1 话题词典。复制成 l1-topics.json 后填入你自己的话题。",
+  "_usage": "keys = 用户台词里会出现的说法；sections = 知识库里的段标题；baseSections = 没命中话题时的兜底段。",
+  "_example": "{\"id\":\"greeting\",\"keys\":[\"你好\",\"在吗\"],\"sections\":[\"寒暄\"]}",
+  "baseSections": [],
+  "topics": []
+}

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>挑选训练素材</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #17181c; color: #e8e8ea; font: 14px/1.6 system-ui, -apple-system, "Noto Sans CJK SC", sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: #1e2026; border-bottom: 1px solid #2c2f36; padding: 10px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .stat { font-size: 12.5px; color: #9aa0aa; }
+  .stat b { color: #e8e8ea; }
+  select, button { background: #262932; color: #e8e8ea; border: 1px solid #3a3f4a; border-radius: 6px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; }
+  button:hover { border-color: #5aa0ff; }
+  main { padding: 14px 16px 60px; display: flex; flex-direction: column; gap: 12px; max-width: 1000px; }
+  .card { border: 1px solid #2c2f36; border-radius: 10px; background: #1c1e24; padding: 12px 14px; }
+  .card.keep { border-color: #2f6b3f; background: #1a241c; }
+  .card.drop { border-color: #6b2f34; background: #241a1c; opacity: .55; }
+  .head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .name { font-weight: 600; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #2c3038; color: #9aa0aa; }
+  .tag.api { background: #1f3350; color: #7fb8ff; }
+  .tag.hw { background: #3a2f16; color: #ffb86c; }
+  .ops { margin-left: auto; display: flex; gap: 6px; }
+  .turns { display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+  .t { display: flex; gap: 8px; }
+  .who { flex: none; width: 2.4em; font-size: 11.5px; padding-top: 2px; }
+  .u .who { color: #7fb8ff; } .a .who { color: #ffb86c; }
+  .txt { flex: 1; white-space: pre-wrap; word-break: break-word; }
+  .empty { color: #9aa0aa; text-align: center; padding: 30px; }
+  .btn-keep { border-color: #2f6b3f; } .btn-drop { border-color: #6b2f34; }
+</style>
+</head>
+<body>
+<header>
+  <h1>挑选训练素材</h1>
+  <span class="stat" id="stat">读取中…</span>
+  <select id="filter-char"><option value="">全部角色</option></select>
+  <select id="filter-state">
+    <option value="undecided">只看没决定的</option>
+    <option value="all">全部</option>
+    <option value="keep">只看保留</option>
+    <option value="drop">只看剔除</option>
+  </select>
+  <button id="btn-clear">清除全部标记</button>
+</header>
+<main id="list"></main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let ALL = [];
+const stateOf = (s) => (s.rejected ? 'drop' : (s.manualKeep ? 'keep' : 'undecided'));
+
+async function load() {
+  ALL = (await (await fetch('/api/script/all')).json()).scripts || [];
+  const chars = [...new Set(ALL.map((s) => String(s.title || '').split('·')[0]))].sort();
+  $('#filter-char').innerHTML = '<option value="">全部角色</option>' + chars.map((c) => `<option>${esc(c)}</option>`).join('');
+  render();
+}
+
+function render() {
+  const fc = $('#filter-char').value, fs = $('#filter-state').value;
+  const rows = ALL.filter((s) => (!fc || String(s.title || '').startsWith(fc)) && (fs === 'all' || stateOf(s) === fs));
+  const keep = ALL.filter((s) => stateOf(s) === 'keep').length;
+  const drop = ALL.filter((s) => stateOf(s) === 'drop').length;
+  $('#stat').innerHTML = `共 <b>${ALL.length}</b> 个 · 保留 <b>${keep}</b> · 剔除 <b>${drop}</b> · 未决定 <b>${ALL.length - keep - drop}</b>`;
+  const box = $('#list');
+  if (!rows.length) { box.innerHTML = '<div class="empty">没有符合条件的素材</div>'; return; }
+  box.innerHTML = rows.map((s) => {
+    const st = stateOf(s);
+    const turns = (s.turns || []).map((t) => `<div class="t ${t.role === 'user' ? 'u' : 'a'}"><span class="who">${t.role === 'user' ? '你' : '角色'}</span><span class="txt">${esc(t.content)}</span></div>`).join('');
+    return `<div class="card ${st === 'keep' ? 'keep' : st === 'drop' ? 'drop' : ''}" data-id="${s.id}">
+      <div class="head">
+        <span class="name">${esc(s.title)}</span>
+        <span class="tag ${s.origin === 'api' ? 'api' : 'hw'}">${s.origin === 'api' ? 'API 生成' : (s.origin || '手写')}</span>
+        <span class="tag">${(s.turns || []).length} 条</span>
+        <span class="tag">system ${(s.system || '').length} 字</span>
+        <span class="ops">
+          <button class="btn-keep" data-act="keep">✓ 参与训练</button>
+          <button class="btn-drop" data-act="drop">✗ 剔除</button>
+        </span>
+      </div>
+      <div class="turns">${turns}</div>
+    </div>`;
+  }).join('');
+}
+
+$('#list').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-act]');
+  if (!btn) return;
+  const card = btn.closest('.card');
+  const s = ALL.find((x) => x.id === card.dataset.id);
+  const want = btn.dataset.act === 'drop';
+  s.rejected = want;
+  await fetch('/api/script/reject', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: s.id, rejected: want }),
+  });
+  render();
+});
+$('#filter-char').onchange = render;
+$('#filter-state').onchange = render;
+$('#btn-clear').onclick = async () => {
+  if (!confirm('清除所有标记？')) return;
+  for (const s of ALL) {
+    if (s.rejected) await fetch('/api/script/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, rejected: false }) });
+  }
+  await load();
+};
+load();
+</script>
+</body>
+</html>

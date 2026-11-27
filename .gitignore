@@ -1,0 +1,28 @@
+node_modules/
+data/
+data-smoke/
+runtime/
+.tts-cache/
+data-dir.txt
+*.log
+.env
+
+# 本地临时备份文件
+*.bak-*
+*.bak
+.venv-tui/
+
+# 每个角色扮演工作台自己维护的「用词/话题词表」——
+# 默认不含任何具体词条（config/*.example.json 是模板），
+# 你自己填的那份放这里：
+config/term-to-plain.json
+config/l1-topics.json
+
+# 智能体/工具产生的本地记忆库（可能含口令、路径等敏感信息）
+.dsh-project-memory/
+.cursor/
+.aider*
+
+# Python 字节码
+__pycache__/
+*.pyc

@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>训练监控</title>
+<style>
+  :root {
+    --bg: #14161a; --bg-soft: #1b1e24; --bg-card: #22262e;
+    --border: #33383f; --text: #e6e8eb; --dim: #8b929c;
+    --accent: #5aa0ff; --ok: #4ec97a; --warn: #d9a441; --danger: #ff6b6b;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 12px 20px;
+    border-bottom: 1px solid var(--border); background: var(--bg-soft);
+    position: sticky; top: 0; z-index: 5; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .spacer { flex: 1; }
+  #open-console {
+    background: #2c3138; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; font-size: 12.5px; cursor: pointer;
+  }
+  #open-console:hover { background: #363c45; }
+  .gpu {
+    display: flex; gap: 16px; font-family: var(--mono); font-size: 12px;
+    color: var(--dim); align-items: center;
+  }
+  .gpu b { color: var(--text); font-weight: 600; }
+  .bar { width: 90px; height: 6px; background: #2c3138; border-radius: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+  .bar.hot > i { background: var(--danger); }
+
+  main { display: grid; grid-template-columns: 300px 1fr; min-height: calc(100vh - 53px); }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  aside { border-right: 1px solid var(--border); overflow-y: auto; max-height: calc(100vh - 53px); }
+  .run {
+    padding: 9px 14px; border-bottom: 1px solid var(--border); cursor: pointer;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .run:hover { background: var(--bg-card); }
+  .run.on { background: var(--bg-card); border-left: 3px solid var(--accent); padding-left: 11px; }
+  .run .top { display: flex; align-items: center; gap: 6px; }
+  .run .name { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run .meta { font-size: 11px; color: var(--dim); display: flex; gap: 10px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #4a4f57; flex: none; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 6px var(--ok); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .tag {
+    font-size: 10px; padding: 1px 5px; border-radius: 4px; flex: none;
+    background: #2c3138; color: var(--dim); text-transform: uppercase; letter-spacing: .04em;
+  }
+  .tag.sft { background: #23364f; color: #7fb8ff; }
+  .tag.dpo { background: #3a2a52; color: #c3a0ff; }
+  .tag.deploy { background: #3d3520; color: #e0c268; }
+
+  section { padding: 18px 22px; overflow-y: auto; max-height: calc(100vh - 53px); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .card .k { font-size: 11px; color: var(--dim); margin-bottom: 3px; }
+  .card .v { font-family: var(--mono); font-size: 17px; font-weight: 600; }
+  .card .v small { font-size: 11px; color: var(--dim); font-weight: 400; }
+
+  h2 { font-size: 13px; color: var(--dim); font-weight: 600; margin: 20px 0 8px; letter-spacing: .05em; }
+  h2:first-of-type { margin-top: 0; }
+
+  .prog { height: 20px; background: var(--bg-card); border-radius: 10px; overflow: hidden; position: relative; border: 1px solid var(--border); }
+  .prog > i { display: block; height: 100%; background: linear-gradient(90deg, #3d7fd6, #5aa0ff); transition: width .5s; }
+  .prog > span {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 11px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  }
+
+  canvas { width: 100%; height: 240px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 11px; color: var(--dim); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 4px; }
+
+  pre {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; overflow-x: auto; font-family: var(--mono); font-size: 12px;
+    line-height: 1.55; margin: 0; max-height: 340px; overflow-y: auto; white-space: pre-wrap;
+    word-break: break-all;
+  }
+  #procs {
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+    padding: 8px 20px; border-bottom: 1px solid var(--border);
+    background: rgba(78,201,122,.05); font-family: var(--mono); font-size: 12px;
+  }
+  .proc { display: flex; align-items: center; gap: 12px; }
+  .proc .pkind {
+    font-size: 10px; padding: 1px 6px; border-radius: 4px;
+    background: #23364f; color: #7fb8ff; letter-spacing: .04em;
+  }
+  .proc .ppid { color: var(--dim); }
+  .pdot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
+    box-shadow: 0 0 6px var(--ok); animation: pulse 1.4s infinite;
+  }
+  .pnone { color: var(--dim); font-size: 12px; }
+  .ev { display: flex; gap: 10px; font-family: var(--mono); font-size: 12px; padding: 2px 0; }
+  .ev .t { color: var(--dim); flex: none; }
+  .empty { color: var(--dim); padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 训练监控</h1>
+  <span id="live" class="tag">…</span>
+  <span class="spacer"></span>
+  <button id="open-console" title="弹出一个终端控制台：显存余量 / 训练数据 / 实时日志（训练一开始也会自动弹）">🖥 控制台</button>
+  <div class="gpu" id="gpu"></div>
+</header>
+
+<div id="procs"></div>
+
+<main>
+  <aside id="runs"></aside>
+  <section id="detail"><div class="empty">选左边一个任务</div></section>
+</main>
+
+<script>
+document.getElementById('open-console')?.addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/train/console', { method: 'POST' }).then((x) => x.json());
+    if (!r.ok) alert(r.reason || '打不开控制台');
+  } catch (err) { alert('打不开控制台：' + err.message); }
+});
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TAG = { sft: 'SFT', dpo: 'DPO', deploy: 'DEPLOY', 'deploy-watch': 'WATCH' };
+const TAGCLS = { sft: 'sft', dpo: 'dpo', deploy: 'deploy', 'deploy-watch': 'deploy' };
+
+let current = '';
+let timer = null;
+// CPU%：/proc 里的 ticks 是累计值，要两次采样才能算占用率
+let prevTicks = {};
+function trackCpu(d) {
+  const at = d.at || Date.now();
+  if (!trackCpu.last) { trackCpu.last = { at, map: {} }; }
+  const prev = trackCpu.last;
+  const now = { at, map: {} };
+  for (const p of d.procs || []) now.map[p.pid] = p.ticks;
+  const out = {};
+  const dt = (at - prev.at) / 1000;
+  if (dt > 0.5) {
+    for (const pid of Object.keys(now.map)) {
+      const d1 = now.map[pid] - (prev.map[pid] ?? now.map[pid]);
+      // ticks 单位是 1/100 秒
+      out[pid] = Math.max(0, Math.round(d1 / 100 / dt * 100));
+    }
+  }
+  trackCpu.last = now;
+  return out;
+}
+
+function fmtSec(s) {
+  if (!s || !isFinite(s)) return '—';
+  s = Math.round(s);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
+  return Math.floor(s / 3600) + 'h' + String(Math.floor((s % 3600) / 60)).padStart(2, '0') + 'm';
+}
+function fmtSize(b) {
+  if (b > 1e6) return (b / 1e6).toFixed(1) + 'MB';
+  if (b > 1e3) return (b / 1e3).toFixed(0) + 'KB';
+  return b + 'B';
+}
+
+async function loadRuns() {
+  let d;
+  try { d = await (await fetch('/api/train/runs')).json(); } catch { return; }
+  const g = d.gpu || {};
+  const pct = g.ok ? Math.round(g.usedMB / g.totalMB * 100) : 0;
+  $('#gpu').innerHTML = g.ok
+    ? `<span>显存 <b>${(g.usedMB/1024).toFixed(1)}/${(g.totalMB/1024).toFixed(0)}</b> GB</span>
+       <span class="bar${pct>90?' hot':''}"><i style="width:${pct}%"></i></span>
+       <span>GPU <b>${g.utilization}%</b></span>
+       <span>${g.temp}°C</span>`
+    : '<span>无 GPU 信息</span>';
+
+  // 实时进程：日志可能被缓冲住，但进程状态永远是真的
+  const live = d.live?.procs || [];
+  const cpu = trackCpu(d.live || {});
+  const KIND = { sft: 'SFT', dpo: 'DPO', convert: '转GGUF', quantize: '量化' };
+  const box = $('#procs');
+  if (box) {
+    box.innerHTML = live.length
+      ? live.map((x) => `<div class="proc">
+          <span class="pdot"></span>
+          <span class="pkind">${KIND[x.kind] || x.kind}</span>
+          <span class="ppid">pid ${x.pid}</span>
+          <span>${x.rssMB >= 1024 ? (x.rssMB/1024).toFixed(1)+' GB' : x.rssMB+' MB'} 内存</span>
+          <span>${x.threads} 线程</span>
+          <span>已跑 ${fmtSec(x.etimes)}</span>
+          <span>CPU <b>${cpu[x.pid] != null ? cpu[x.pid] + '%' : '…'}</b></span>
+        </div>`).join('')
+      : '<span class="pnone">没有训练进程在跑</span>';
+  }
+
+  const runs = d.runs || [];
+  const active = live.length > 0 || runs.some((r) => r.live);
+  $('#live').textContent = active ? '运行中' : '空闲';
+  $('#live').className = 'tag ' + (active ? 'sft' : '');
+
+  if (!runs.length) { $('#runs').innerHTML = '<div class="empty">没有训练日志</div>'; return; }
+  if (!current) {
+    // 默认选第一个正在跑的，否则选最新的 SFT
+    const live = runs.find((r) => r.live && r.kind === 'sft') || runs.find((r) => r.kind === 'sft') || runs[0];
+    current = live.name;
+  }
+  $('#runs').innerHTML = runs.map((r) => `
+    <div class="run${r.name === current ? ' on' : ''}" data-name="${esc(r.name)}">
+      <div class="top">
+        <span class="dot${r.live ? ' live' : ''}"></span>
+        <span class="name">${esc(r.name)}</span>
+        <span class="tag ${TAGCLS[r.kind] || ''}">${TAG[r.kind] || r.kind}</span>
+      </div>
+      <div class="meta">
+        ${r.phase && r.live ? `<b class="tag ${r.phase}">${(r.phase || '').toUpperCase()}</b>` : ''}
+        ${r.progress ? `<span>${r.progress.step}/${r.progress.total} 步</span>` : (r.etaInfo?.total ? `<span>${r.etaInfo.done}/${r.etaInfo.total} 步</span>` : '')}
+        ${r.lossCount ? `<span>loss ${Number(r.lastLoss).toFixed(3)}</span>` : ''}
+        <span>${fmtSize(r.size)}</span>
+        <span>${new Date(r.mtime).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+      </div>
+    </div>`).join('');
+  $('#runs').querySelectorAll('.run').forEach((el) => {
+    el.onclick = () => { current = el.dataset.name; loadRuns(); loadDetail(); };
+  });
+  return runs;
+}
+
+function drawChart(series) {
+  const cv = $('#chart');
+  if (!cv || !series.length) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  cv.width = w * dpr; cv.height = h * dpr;
+  const c = cv.getContext('2d');
+  c.scale(dpr, dpr);
+  c.clearRect(0, 0, w, h);
+
+  const pad = { l: 46, r: 12, t: 14, b: 24 };
+  const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
+  const losses = series.map((s) => s.loss);
+  const min = Math.min(...losses), max = Math.max(...losses);
+  const span = Math.max(1e-6, max - min);
+  const X = (i) => pad.l + (series.length === 1 ? iw / 2 : i / (series.length - 1) * iw);
+  const Y = (v) => pad.t + ih - (v - min) / span * ih;
+
+  // 网格 + y 轴
+  c.strokeStyle = '#2c3138'; c.fillStyle = '#8b929c';
+  c.font = '10px ui-monospace, monospace'; c.lineWidth = 1;
+  for (let k = 0; k <= 4; k += 1) {
+    const v = min + span * k / 4;
+    const y = Y(v);
+    c.beginPath(); c.moveTo(pad.l, y); c.lineTo(w - pad.r, y); c.stroke();
+    c.fillText(v.toFixed(3), 4, y + 3);
+  }
+  // x 轴标签
+  const first = series[0].step, last = series[series.length - 1].step;
+  c.fillText(String(first), pad.l, h - 6);
+  const lbl = String(last);
+  c.fillText(lbl, w - pad.r - c.measureText(lbl).width, h - 6);
+
+  // loss 折线
+  c.strokeStyle = '#5aa0ff'; c.lineWidth = 2; c.beginPath();
+  series.forEach((s, i) => (i ? c.lineTo(X(i), Y(s.loss)) : c.moveTo(X(i), Y(s.loss))));
+  c.stroke();
+  // 点
+  c.fillStyle = '#5aa0ff';
+  series.forEach((s, i) => {
+    if (series.length > 60 && i % Math.ceil(series.length / 60)) return;
+    c.beginPath(); c.arc(X(i), Y(s.loss), 2.4, 0, Math.PI * 2); c.fill();
+  });
+  // 最新点高亮
+  const li = series.length - 1;
+  c.fillStyle = '#4ec97a';
+  c.beginPath(); c.arc(X(li), Y(series[li].loss), 4, 0, Math.PI * 2); c.fill();
+}
+
+async function loadDetail() {
+  if (!current) return;
+  let d;
+  try { d = await (await fetch('/api/train/run?name=' + encodeURIComponent(current))).json(); } catch { return; }
+  if (d.error) { $('#detail').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+
+  const p = d.progress;
+  const ei = d.etaInfo;
+  const done = ei && ei.total ? ei.done : (p ? p.step : 0);
+  const total = (ei && ei.total) || (p ? p.total : 0);
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const last = d.series.length ? d.series[d.series.length - 1] : null;
+  const first = d.series.length ? d.series[0] : null;
+  const speedup = p && p.secPerIt ? d.eta.toFixed(0) : null;
+
+  $('#detail').innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="k">进度</div><div class="v">${done}<small>/${total || '?'}</small></div></div>
+      <div class="card"><div class="k">已用时</div><div class="v">${ei && ei.elapsed ? fmtSec(ei.elapsed) : (p ? p.elapsed : '—')}</div></div>
+      <div class="card"><div class="k">预计剩余</div><div class="v" style="color:${ei && ei.eta > 0 ? '#4ec97a' : 'inherit'}">${ei && ei.eta ? fmtSec(ei.eta) : (p ? p.eta : '—')}</div></div>
+      <div class="card"><div class="k">完成时刻</div><div class="v">${ei && ei.finishAt ? new Date(ei.finishAt).toLocaleTimeString('zh-CN', { hour12: false }).slice(0, 5) : '—'}</div></div>
+      <div class="card"><div class="k">每步</div><div class="v">${ei && ei.secPerIt ? ei.secPerIt.toFixed(0) + '<small>s</small>' : (p ? p.secPerIt.toFixed(1) + '<small>s</small>' : '—')}</div></div>
+      <div class="card"><div class="k">当前 loss</div><div class="v" style="color:${last ? '#5aa0ff' : 'inherit'}">${last ? last.loss.toFixed(3) : '—'}</div></div>
+      <div class="card"><div class="k">起始 loss</div><div class="v">${first ? first.loss.toFixed(3) : '—'}</div></div>
+    </div>
+
+    <h2>进度</h2>
+    <div class="prog"><i style="width:${pct}%"></i><span>${pct}%${ei && ei.elapsed ? ' · ' + fmtSec(ei.elapsed) + ' 已用 · 剩 ' + fmtSec(ei.eta) : (p ? ' · ' + p.elapsed + ' 已用 · 剩 ' + p.eta : '')}</span></div>
+
+    <h2>Loss 曲线${d.series.length ? `（${d.series.length} 个点）` : ''}</h2>
+    ${d.series.length
+      ? '<canvas id="chart"></canvas><div class="legend"><span><i style="background:#5aa0ff"></i>loss</span><span><i style="background:#4ec97a"></i>最新点</span></div>'
+      : '<div class="empty" style="padding:20px">这个日志没有 loss 记录<br><small>（训练脚本已改为 logging_steps=1 + 关进度条，下一轮就有了）</small></div>'}
+
+    <h2>事件</h2>
+    <div>${d.events.length
+      ? d.events.slice(-30).map((e) => `<div class="ev"><span class="t">${esc(e.t)}</span><span>${esc(e.msg)}</span></div>`).join('')
+      : '<div class="empty" style="padding:14px">无</div>'}</div>
+
+    <h2>日志尾部</h2>
+    <pre>${esc(d.tail)}</pre>`;
+
+  drawChart(d.series);
+  window.onresize = () => drawChart(d.series);
+}
+
+async function tick() {
+  await loadRuns();
+  await loadDetail();
+  clearTimeout(timer);
+  timer = setTimeout(tick, 2500);
+}
+tick();
+</script>
+</body>
+</html>
